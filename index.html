@@ -176,7 +176,7 @@
     <div></div><div></div><div></div><div></div>
   </div>
 
-  <div class="hint">A / MELLANSLAG = LÅS · B = LJUD PÅ/AV</div>
+  <div class="hint">A / MELLANSLAG = LÅS · B = LJUD PÅ/AV · HOME = TILLBAKA</div>
 </div>
 
 <button id="viewToggle" class="view-toggle" title="Växla vy (F)" aria-label="Växla vy">⛶</button>
@@ -220,11 +220,17 @@
   const OVER_EARTH_CATCH_TOL = 0.14;    // hur nära perfekt tajming man måste trycka (andel av tidsfönstret)
   const OVER_EARTH_CAUGHT_DUR = 1.1;    // jubel-sekvens vid lyckad fångst
 
-  // ---- spellägen (huvudmenyn) ----
+  // ---- huvudmenyn (allra första skärmen) ----
+  const MAIN_MENU = [
+    {id:'local',        label:'SPELA LOKALT',     desc:'KLASSISKT / TID / SCORE'},
+    {id:'onlinecreate',  label:'SKAPA ONLINE-RUM', desc:'BJUD IN EN VÄN'},
+    {id:'onlinejoin',    label:'GÅ MED I RUM',     desc:'ANGE EN RUMSKOD'}
+  ];
+  // ---- spellägen (lokala menyn under "SPELA LOKALT") ----
   const MODES = [
     {id:'classic',    label:'KLASSISKT',    desc:'FÄLL KUBBAR + KUNGEN'},
-    {id:'timeattack',  label:'TID-UTMANING', desc:'SPRING MOT KLOCKAN'},
-    {id:'highscores',  label:'HIGHSCORE',   desc:'TOPP 10 LISTA'}
+    {id:'timeattack',  label:'TID-UTMANING',  desc:'SPRING MOT KLOCKAN'},
+    {id:'highscores',  label:'HIGHSCORE',    desc:'TOPP 10 LISTA'}
   ];
   const TIME_ATTACK_START = 60;      // sekunder vid start
   const TIME_BONUS_PER_ROUND = 10;   // bonussekunder när en runda klaras
@@ -235,6 +241,16 @@
   const NAME_LEN = 6;          // antal tecken i namnet på highscore-listan
   const HIGHSCORE_KEY = 'wiiKubbHighscores';
   const MAX_HIGHSCORES = 10;   // topp-10, både lokalt (offline-cache) och i det globala molnet
+
+  // ---- online-läge: rumskoder ----
+  const JOIN_CHARSET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'; // tecken spelaren kan bläddra mellan i rumskoden
+  const ROOM_CODE_LEN = 4;
+  // Tillstånd där en pågående lokal runda ska kunna avbrytas (och, i
+  // online-läge, räknas som att man ger sig - motståndaren vinner då).
+  const QUITTABLE_STATES = ['aim','power','throw','overpower','roundclear','onlinespectate'];
+  // Skärmar utan pågående runda - HOME/Escape går rakt tillbaka till
+  // huvudmenyn härifrån, utan bekräftelsedialog.
+  const BACK_TO_MAIN_STATES = ['menu','highscoreList','onlinewaiting','onlinejoinentry','onlinegameover'];
 
   // 8-bitars bakgrundsmusik (svensk folkmelodi-loop), 0 = paus/tystnad.
   const MUSIC_NOTE_DUR = 0.24;
@@ -340,7 +356,11 @@
       this.ctx.scale(3,3);
       this.audio = new AudioEngine();
 
-      this.state = 'menu'; // menu, aim, power, throw, overpower, kingfall, seagullhit, roundclear, gameover, nameentry, highscoreList, confirmQuit
+      // state kan bl.a. vara: mainmenu, menu, aim, power, throw, overpower,
+      // kingfall, seagullhit, roundclear, gameover, nameentry, highscoreList,
+      // confirmQuit, onlinewaiting, onlinejoinentry, onlinespectate, onlinegameover
+      this.state = 'mainmenu';
+      this.mainMenuIndex = 0;
       this.gameMode = 'classic'; // 'classic' | 'timeattack'
       this.menuIndex = 0;
       this.timeLeft = 0;
@@ -384,6 +404,22 @@
       this.seagullCooldown = SEAGULL_GAP_MIN + Math.random()*(SEAGULL_GAP_MAX-SEAGULL_GAP_MIN);
       this.seagullHitAnim = null; // {t,dur,x,y} - spelas upp när man råkar träffa fiskmåsen
 
+      // ---- online-multiplayer (Firebase Realtime Database) ----
+      this.clientId = 'c' + Math.random().toString(36).slice(2,10) + Date.now().toString(36);
+      this.isOnline = false;          // true medan man är inne i ett online-rum
+      this.onlineRole = null;         // 1 = värd (skapade rummet), 2 = gäst (gick med)
+      this.onlineCode = null;         // fyrteckens rumskod
+      this.onlineUnsub = null;        // avbryter Firebase-lyssnaren när man lämnar
+      this.onlineRoomData = null;     // senaste synkade rum-snapshot
+      this.onlineMyTurn = false;
+      this.onlineWinner = null;       // 1 eller 2 när onlinegameover visas
+      this.onlineBusyMessage = null;  // t.ex. "SKAPAR RUM..." medan vi väntar på Firebase
+      this.onlineLastThrowTs = null;  // för att upptäcka nya kast från motståndaren
+      this.spectateThrowAnim = null;  // liten repris-animation av motståndarens senaste kast
+      this.joinChars = [];            // rumskoden som matas in i "GÅ MED I RUM"
+      this.joinCursor = 0;
+      this._dt = 0;
+
       this.msgClock = 0;
       this.last = performance.now();
 
@@ -403,13 +439,18 @@
         }
       });
 
-      this.drawMenu(0);
+      this.drawMainMenu(0);
       requestAnimationFrame(this.loop);
     }
 
     cycleMode(dir){
       dir = dir || 1;
       this.menuIndex = (this.menuIndex + dir + MODES.length) % MODES.length;
+      this.audio.sfxLock();
+    }
+    cycleMainMenu(dir){
+      dir = dir || 1;
+      this.mainMenuIndex = (this.mainMenuIndex + dir + MAIN_MENU.length) % MAIN_MENU.length;
       this.audio.sfxLock();
     }
 
@@ -471,6 +512,10 @@
     cloudReady(){
       return !!(window.WiiKubbCloud && window.WiiKubbCloud.ready);
     }
+    // ---- online-rum via Realtime Database (se WiiKubbRealtime-modulen) ----
+    cloudRealtimeReady(){
+      return !!(window.WiiKubbRealtime && window.WiiKubbRealtime.ready);
+    }
     // Hämtar (eller uppdaterar) den globala topplistan för ett spelläge.
     // force=true tvingar en ny hämtning även om vi redan har en laddad/pågående.
     requestOnlineHighscores(mode, force){
@@ -488,11 +533,16 @@
         entry.status = 'loaded';
       });
     }
-    // Kallas när en omgång tar slut - avgör om spelaren ska få skriva in
-    // sitt namn (nytt highscore) eller gå direkt till GAME OVER-skärmen.
+    // Kallas när en omgång tar slut (LOKALT spel) - avgör om spelaren ska få
+    // skriva in sitt namn (nytt highscore) eller gå direkt till GAME OVER-skärmen.
+    // I online-läge tar onlineEndGame() över helt istället (se nedan).
     endGame(){
       this.throwAnim = null;
       this.overAnim = null;
+      if(this.isOnline){
+        this.onlineEndGame();
+        return;
+      }
       if(this.qualifiesForHighscore(this.round, this.gameMode)){
         this.pendingHighscoreRound = this.round;
         this.nameChars = new Array(NAME_LEN).fill('A');
@@ -541,10 +591,257 @@
       this.audio.sfxLock();
     }
 
+    // =====================================================================
+    // ---- ONLINE-LÄGE (turordningsbaserad multiplayer via Realtime DB) ----
+    // =====================================================================
+    // Modellen är enkel med flit: EN delad kubb-rad + kung, ett delat
+    // pinn-förråd på 8 per runda, och tur-om-tur ett enda kast innan turen
+    // lämnas över till motståndaren. Den spelare vars tur det är kör hela
+    // sikta/kraft/kast-sekvensen precis som i lokalt läge (inklusive
+    // fiskmås och "överkraft"-sekvenserna) - det är bara SLUTRESULTATET av
+    // varje kast som skickas till Firebase. Motståndarens klient speglar
+    // bara brädet (klossar/kung/runda/pinnar) och väntar på sin tur.
+    resetOnlineFields(){
+      this.isOnline = false;
+      this.onlineRole = null;
+      this.onlineCode = null;
+      if(this.onlineUnsub){ this.onlineUnsub(); this.onlineUnsub = null; }
+      this.onlineRoomData = null;
+      this.onlineMyTurn = false;
+      this.onlineWinner = null;
+      this.onlineBusyMessage = null;
+      this.onlineLastThrowTs = null;
+      this.spectateThrowAnim = null;
+    }
+    leaveOnlineRoom(){
+      const code = this.onlineCode;
+      const wasOnline = this.isOnline;
+      if(this.onlineUnsub){ this.onlineUnsub(); this.onlineUnsub = null; }
+      if(wasOnline && code && this.cloudRealtimeReady()){
+        // Bästa-försök: markera rummet som avslutat så motståndaren inte blir
+        // stående och väntar för evigt. Blockerar aldrig UI:t.
+        window.WiiKubbRealtime.endRoom(code);
+      }
+      this.resetOnlineFields();
+    }
+    buildFreshOnlineRound(round, turn){
+      return {
+        round: round,
+        turn: turn,               // 1 eller 2 - vem som siktar just nu
+        phase: 'kubbs',
+        kubbsStanding: [true,true,true,true,true],
+        kingFallen: false,
+        batonsLeft: 8,
+        message: 'RUNDA ' + round + '!',
+        gameOver: false,
+        winner: null,
+        lastThrow: null
+      };
+    }
+    createOnlineRoom(){
+      if(!this.cloudRealtimeReady()){
+        this.message = 'ONLINE OTILLGÄNGLIGT'; this.msgTimer = 1.6;
+        return;
+      }
+      this.audio.ensure();
+      this.resetOnlineFields();
+      this.onlineRole = 1;
+      this.onlineBusyMessage = 'SKAPAR RUM...';
+      this.state = 'onlinewaiting';
+      const initial = this.buildFreshOnlineRound(1, 1);
+      window.WiiKubbRealtime.createRoom(this.clientId, initial).then(code=>{
+        this.onlineBusyMessage = null;
+        if(!code){
+          this.message = 'KUNDE INTE SKAPA RUM'; this.msgTimer = 1.8;
+          this.resetOnlineFields();
+          this.state = 'mainmenu';
+          return;
+        }
+        this.isOnline = true;
+        this.onlineCode = code;
+        this.attachRoomListener(code);
+      });
+    }
+    joinChangeLetter(dir){
+      const set = JOIN_CHARSET;
+      let idx = set.indexOf(this.joinChars[this.joinCursor]);
+      if(idx < 0) idx = 0;
+      idx = (idx + dir + set.length) % set.length;
+      this.joinChars[this.joinCursor] = set[idx];
+      this.audio.sfxLock();
+    }
+    joinMoveCursor(dir){
+      this.joinCursor = Math.max(0, Math.min(this.joinChars.length-1, this.joinCursor+dir));
+      this.audio.sfxLock();
+    }
+    submitJoinCode(){
+      if(!this.cloudRealtimeReady()){
+        this.message = 'ONLINE OTILLGÄNGLIGT'; this.msgTimer = 1.6;
+        return;
+      }
+      const code = this.joinChars.join('');
+      this.audio.ensure();
+      this.onlineBusyMessage = 'GÅR MED...';
+      window.WiiKubbRealtime.joinRoom(code, this.clientId).then(res=>{
+        this.onlineBusyMessage = null;
+        if(!res.ok){
+          this.message = res.reason === 'notfound' ? 'RUM HITTADES EJ'
+            : res.reason === 'full' ? 'RUMMET ÄR FULLT'
+            : 'ANSLUTNING MISSLYCKADES';
+          this.msgTimer = 1.8;
+          this.audio.sfxOver();
+          return; // stanna kvar i kodinmatningen - spelaren kan försöka igen
+        }
+        this.isOnline = true;
+        this.onlineRole = 2;
+        this.onlineCode = code;
+        this.audio.sfxWin();
+        this.attachRoomListener(code);
+      });
+    }
+    attachRoomListener(code){
+      if(this.onlineUnsub) this.onlineUnsub();
+      this.onlineUnsub = window.WiiKubbRealtime.listenRoom(code, (data)=>this.applyRemoteRoomSnapshot(data));
+    }
+    // Körs varje gång Firebase skickar en ny version av rummet - för BÅDA
+    // spelarna, inklusive den som själv precis skrev uppdateringen.
+    applyRemoteRoomSnapshot(data){
+      if(!this.isOnline) return;
+      if(!data){
+        // Rummet finns inte längre (t.ex. motståndaren lämnade/avslutade).
+        this.message = 'MOTSPELAREN LÄMNADE RUMMET';
+        this.msgTimer = 1.8;
+        this.audio.sfxOver();
+        this.leaveOnlineRoom();
+        this.state = 'mainmenu';
+        return;
+      }
+      this.onlineRoomData = data;
+
+      // Spegla brädet lokalt, oavsett vems tur det är - båda spelarna ska
+      // alltid se exakt samma klossar, kung och pinn-antal.
+      const standing = data.kubbsStanding || [true,true,true,true,true];
+      this.kubbs = KUBB_XS.map((x,i)=>({x, standing: !!standing[i]}));
+      this.round = data.round || 1;
+      this.batons = data.batonsLeft != null ? data.batonsLeft : 8;
+      this.phase = data.phase || 'kubbs';
+      this.fallenPieces = this.kubbs.filter(k=>!k.standing).map(k=>({x:k.x, y:KUBB_Y, type:'kubb'}));
+      if(data.kingFallen) this.fallenPieces.push({x:KING_X, y:KING_Y, type:'king'});
+
+      if(data.message) this.message = data.message;
+
+      // Repris-animation av motståndarens senast kastade pinne (rent visuellt).
+      if(data.lastThrow && data.lastThrow.ts && data.lastThrow.ts !== this.onlineLastThrowTs){
+        this.onlineLastThrowTs = data.lastThrow.ts;
+        if(data.lastThrow.by !== this.onlineRole){
+          this.spectateThrowAnim = {
+            t:0, dur:0.5, x0:80, y0:BASE_Y,
+            x1:data.lastThrow.x, y1:data.lastThrow.y
+          };
+        }
+      }
+
+      if(data.status === 'waiting'){
+        this.state = 'onlinewaiting';
+        return;
+      }
+      if(data.status === 'ended' && !data.gameOver){
+        // Motståndaren gav sig/lämnade utan ett tydligt game-over-resultat.
+        if(this.state !== 'mainmenu'){
+          this.message = 'MOTSPELAREN AVSLUTADE';
+          this.msgTimer = 1.8;
+          this.leaveOnlineRoom();
+          this.state = 'mainmenu';
+        }
+        return;
+      }
+      if(data.gameOver){
+        this.onlineWinner = data.winner || null;
+        this.msgTimer = 0;
+        this.state = 'onlinegameover';
+        return;
+      }
+
+      const myTurn = data.turn === this.onlineRole;
+      this.onlineMyTurn = myTurn;
+      const activeLocalStates = ['aim','power','throw','overpower','seagullhit','kingfall'];
+      if(myTurn){
+        if(!activeLocalStates.includes(this.state)){
+          this.aimSpeed = 2.6 + (this.round-1)*0.2;
+          this.powerSpeed = 3.6 + (this.round-1)*0.3;
+          this.throwAnim = null; this.overAnim = null; this.seagullHitAnim = null; this.kingFallAnim = null;
+          this.state = 'aim';
+          this.aimT = Math.random()*10;
+          this.msgTimer = data.message ? 1.2 : 0;
+        }
+      } else {
+        if(!activeLocalStates.includes(this.state)){
+          this.state = 'onlinespectate';
+          this.msgTimer = data.message ? 1.2 : 0;
+        }
+      }
+    }
+    // Skickar resultatet av mitt just avslutade kast till Firebase och
+    // lämnar över turen till motståndaren. extra kan innehålla t.ex. en ny
+    // fas (kubbs->king) eller landningskoordinater för repris-animationen.
+    pushOnlineHandoff(extra){
+      if(!this.isOnline) return;
+      const nextTurn = this.onlineRole === 1 ? 2 : 1;
+      const payload = Object.assign({
+        turn: nextTurn,
+        phase: this.phase,
+        kubbsStanding: this.kubbs.map(k=>k.standing),
+        kingFallen: this.fallenPieces.some(p=>p.type==='king'),
+        batonsLeft: Math.max(0, this.batons),
+        round: this.round,
+        message: this.message || '',
+        gameOver: false
+      }, extra || {});
+      window.WiiKubbRealtime.updateRoom(this.onlineCode, payload);
+      this.throwAnim = null; this.overAnim = null; this.seagullHitAnim = null; this.kingFallAnim = null;
+      this.state = 'onlinespectate';
+    }
+    // Kungen föll på rätt sätt - rundan är klar. Startar nästa runda direkt
+    // (ingen "TRYCK A" väntan i online-läge) och låter motståndaren börja.
+    pushOnlineRoundClear(){
+      if(!this.isOnline) return;
+      const nextTurn = this.onlineRole === 1 ? 2 : 1;
+      const nextRound = this.round + 1;
+      const payload = this.buildFreshOnlineRound(nextRound, nextTurn);
+      payload.message = 'RUNDA ' + nextRound + '! SPELARE ' + nextTurn + ' BÖRJAR';
+      window.WiiKubbRealtime.updateRoom(this.onlineCode, payload);
+      this.throwAnim = null; this.overAnim = null; this.seagullHitAnim = null; this.kingFallAnim = null;
+      this.state = 'onlinespectate';
+    }
+    // Anropas via endGame() när isOnline är true. Den spelare vars kast just
+    // avgjorde matchen (missad kung, egen-mål på kungen, eller slut på
+    // pinnar) förlorar - motståndaren vinner.
+    onlineEndGame(){
+      if(!this.isOnline) return;
+      const winner = this.onlineRole === 1 ? 2 : 1;
+      const payload = {
+        gameOver: true,
+        status: 'ended',
+        winner: winner,
+        message: 'SPELARE ' + winner + ' VANN!',
+        kubbsStanding: this.kubbs.map(k=>k.standing),
+        kingFallen: this.fallenPieces.some(p=>p.type==='king'),
+        batonsLeft: Math.max(0, this.batons),
+        round: this.round
+      };
+      window.WiiKubbRealtime.updateRoom(this.onlineCode, payload);
+      this.state = 'onlinespectate'; // väntar in game-over-snapshotten
+    }
+
     // ---- MENY-knapp: bekräfta att man vill överge pågående runda ----
     requestQuitConfirm(){
-      const quittableStates = ['aim','power','throw','overpower','roundclear'];
-      if(!quittableStates.includes(this.state)) return;
+      if(BACK_TO_MAIN_STATES.includes(this.state)){
+        if(this.isOnline) this.leaveOnlineRoom();
+        this.state = 'mainmenu';
+        this.audio.sfxLock();
+        return;
+      }
+      if(!QUITTABLE_STATES.includes(this.state)) return;
       this.previousState = this.state;
       this.confirmIndex = 0; // förvalt NEJ - man ska aktivt behöva välja JA
       this.state = 'confirmQuit';
@@ -556,11 +853,18 @@
     }
     resolveConfirm(){
       if(this.confirmIndex === 1){
-        // JA - överge rundan och gå till huvudmenyn.
+        // JA - överge rundan.
         this.throwAnim = null;
         this.overAnim = null;
         this.audio.sfxOver();
-        this.state = 'menu';
+        if(this.isOnline){
+          // I online-läge räknas det att ge sig som en förlust - motståndaren
+          // vinner. onlineEndGame() sätter alltid motståndaren som vinnare,
+          // oavsett vems tur det just var, så den är säker att anropa här.
+          this.onlineEndGame();
+        } else {
+          this.state = 'menu';
+        }
       } else {
         // NEJ - fortsätt exakt där man var.
         this.state = this.previousState;
@@ -574,6 +878,30 @@
       this.audio.ensure();
       if(this.state === 'confirmQuit'){ this.resolveConfirm(); return; }
       if(this.state === 'overpower'){ this.attemptEarthCatch(); return; }
+
+      if(this.state === 'mainmenu'){
+        const chosen = MAIN_MENU[this.mainMenuIndex];
+        this.audio.sfxLock();
+        if(chosen.id === 'local'){
+          this.state = 'menu'; this.menuIndex = 0;
+        } else if(chosen.id === 'onlinecreate'){
+          this.createOnlineRoom();
+        } else if(chosen.id === 'onlinejoin'){
+          this.joinChars = new Array(ROOM_CODE_LEN).fill('A');
+          this.joinCursor = 0;
+          this.state = 'onlinejoinentry';
+        }
+        return;
+      }
+      if(this.state === 'onlinejoinentry'){ this.joinChangeLetter(1); return; }
+      if(this.state === 'onlinewaiting'){ return; } // inget att göra - väntar på Firebase/motståndare
+      if(this.state === 'onlinespectate'){ return; } // inte min tur
+      if(this.state === 'onlinegameover'){
+        this.leaveOnlineRoom();
+        this.state = 'mainmenu';
+        return;
+      }
+
       if(this.state === 'menu'){
         const chosen = MODES[this.menuIndex];
         if(chosen.id === 'highscores'){
@@ -593,6 +921,9 @@
         if(this.gameMode === 'timeattack') this.timeLeft += TIME_BONUS_PER_ROUND;
         this.round++; this.newRound();
         return;
+      }
+      if(this.isOnline && (this.state === 'aim' || this.state === 'power') && !this.onlineMyTurn){
+        return; // säkerhetsspärr - ska normalt aldrig nås eftersom vi bara går in i aim/power på egen tur
       }
       if(this.state === 'aim'){
         this.lockedX = this.aimX;
@@ -681,7 +1012,8 @@
     finishOverpowerEarthCatch(){
       this.overAnim = null;
       // Fångad i rätt ögonblick - inget kast går förlorat, och spelaren
-      // belönas dessutom med ett extra kast.
+      // belönas dessutom med ett extra kast. I online-läge behåller samma
+      // spelare turen för detta bonuskastet (ingen handoff sker).
       this.batons++;
       this.message = 'FÅNGAD! EXTRA KAST!';
       this.msgTimer = 1.4;
@@ -692,7 +1024,7 @@
       const variant = this.overAnim ? this.overAnim.variant : 'leg';
       this.overAnim = null;
       // Animationen är färdigspelad - räknas som ett missat kast, nästa kast
-      // påbörjas automatiskt.
+      // påbörjas automatiskt (eller lämnas över till motståndaren online).
       if(this.phase === 'king'){
         this.message = variant === 'bird' ? 'ÖVERKRAFT – FISKMÅSEN I VÄGEN!'
           : variant === 'earth' ? 'ÖVERKRAFT – PINNEN FÖRSVANN JORDEN RUNT!'
@@ -712,6 +1044,7 @@
         this.endGame();
         return;
       }
+      if(this.isOnline){ this.pushOnlineHandoff(); return; }
       this.state = 'aim';
       this.aimT = Math.random()*10;
     }
@@ -779,14 +1112,17 @@
         this.msgTimer = 0.8;
       }
       this.batons--;
+      const lastThrowInfo = {x:x1, y:y1, hit, by:this.onlineRole, ts:Date.now()};
 
       // Om detta kast fällde sista klossen: byt fas till kungen, men avgör
-      // inte rundan här - spelaren får ett separat försök på kungen.
+      // inte rundan här - spelaren (eller i online-läge: motståndaren) får
+      // ett separat försök på kungen.
       if(this.phase === 'kubbs' && this.kubbsStanding() === 0){
         this.phase = 'king';
         this.message = 'SIKTA PÅ KUNGEN!';
         this.msgTimer = 1.3;
         this.throwAnim = null;
+        if(this.isOnline){ this.pushOnlineHandoff({lastThrow:lastThrowInfo}); return; }
         this.state = 'aim';
         this.aimT = Math.random()*10;
         return;
@@ -809,6 +1145,7 @@
         return;
       }
 
+      if(this.isOnline){ this.pushOnlineHandoff({lastThrow:lastThrowInfo}); return; }
       this.state = 'aim';
       this.aimT = Math.random()*10;
       this.throwAnim = null;
@@ -900,6 +1237,7 @@
         this.endGame();
         return;
       }
+      if(this.isOnline){ this.pushOnlineHandoff(); return; }
       this.state = 'aim';
       this.aimT = Math.random()*10;
     }
@@ -916,6 +1254,16 @@
           if(e.code === 'Space'){ e.preventDefault(); this.nameEntryChangeLetter(1); return; }
           return;
         }
+        if(this.state === 'onlinejoinentry'){
+          if(e.code === 'ArrowUp'){ e.preventDefault(); this.joinChangeLetter(1); return; }
+          if(e.code === 'ArrowDown'){ e.preventDefault(); this.joinChangeLetter(-1); return; }
+          if(e.code === 'ArrowLeft'){ e.preventDefault(); this.joinMoveCursor(-1); return; }
+          if(e.code === 'ArrowRight'){ e.preventDefault(); this.joinMoveCursor(1); return; }
+          if(e.code === 'Enter'){ e.preventDefault(); this.submitJoinCode(); return; }
+          if(e.code === 'Space'){ e.preventDefault(); this.joinChangeLetter(1); return; }
+          if(e.code === 'Escape'){ e.preventDefault(); this.requestQuitConfirm(); return; }
+          return;
+        }
         if(this.state === 'confirmQuit'){
           if(e.code === 'ArrowLeft' || e.code === 'ArrowRight'){ e.preventDefault(); this.toggleConfirmChoice(); return; }
           if(e.code === 'Space' || e.code === 'Enter'){ e.preventDefault(); this.resolveConfirm(); return; }
@@ -925,6 +1273,11 @@
         if(e.code === 'Space' || e.code === 'Enter'){ e.preventDefault(); this.actionPress(); }
         if(e.key === 'b' || e.key === 'B'){ this.audio.toggleSound(); }
         if(e.code === 'Escape'){ e.preventDefault(); this.requestQuitConfirm(); }
+        if(this.state === 'mainmenu' && (e.code==='ArrowUp'||e.code==='ArrowDown'||e.code==='ArrowLeft'||e.code==='ArrowRight')){
+          e.preventDefault();
+          const dir = (e.code==='ArrowUp'||e.code==='ArrowLeft') ? -1 : 1;
+          this.cycleMainMenu(dir);
+        }
         if(this.state === 'menu' && (e.code==='ArrowUp'||e.code==='ArrowDown'||e.code==='ArrowLeft'||e.code==='ArrowRight')){
           e.preventDefault();
           const dir = (e.code==='ArrowUp'||e.code==='ArrowLeft') ? -1 : 1;
@@ -938,21 +1291,27 @@
       document.getElementById('btnA').addEventListener('click', ()=>this.actionPress());
       document.getElementById('btnStart').addEventListener('click', ()=>{
         if(this.state === 'nameentry'){ this.submitName(); return; }
+        if(this.state === 'onlinejoinentry'){ this.submitJoinCode(); return; }
         this.actionPress();
       });
       document.getElementById('btnB').addEventListener('click', ()=>this.audio.toggleSound());
       document.getElementById('btnMenu').addEventListener('click', ()=>this.requestQuitConfirm());
       document.getElementById('btnSelect').addEventListener('click', ()=>{
-        if(this.state === 'menu'){ this.cycleMode(); }
+        if(this.state === 'mainmenu'){ this.cycleMainMenu(); }
+        else if(this.state === 'menu'){ this.cycleMode(); }
         else if(this.state === 'gameover'){ this.state = 'menu'; }
+        else if(this.state === 'onlinegameover'){ this.leaveOnlineRoom(); this.state='mainmenu'; }
         else if(this.state === 'highscoreList'){ this.toggleHighscoreView(); }
         else if(this.state === 'nameentry'){ this.nameEntryMoveCursor(-1); }
+        else if(this.state === 'onlinejoinentry'){ this.joinMoveCursor(-1); }
         else if(this.state === 'confirmQuit'){ this.toggleConfirmChoice(); }
       });
       const dpad = document.querySelector('.dpad');
       if(dpad) dpad.addEventListener('click', ()=>{
-        if(this.state === 'menu'){ this.cycleMode(); }
+        if(this.state === 'mainmenu'){ this.cycleMainMenu(); }
+        else if(this.state === 'menu'){ this.cycleMode(); }
         else if(this.state === 'nameentry'){ this.nameEntryMoveCursor(1); }
+        else if(this.state === 'onlinejoinentry'){ this.joinMoveCursor(1); }
         else if(this.state === 'highscoreList'){ this.toggleHighscoreView(); }
         else if(this.state === 'confirmQuit'){ this.toggleConfirmChoice(); }
       });
@@ -1054,6 +1413,34 @@
       this.rect(x-4,y-16,8,7, PAL.darkest);
     }
 
+    drawMainMenu(t){
+      this.rect(0,0,W,H, PAL.lightest);
+      const ctx = this.ctx;
+      ctx.textAlign='center';
+      ctx.fillStyle = PAL.darkest;
+      ctx.font = "13px monospace";
+      ctx.fillText("WII-KUBB", W/2, 16);
+      ctx.font = "6px monospace";
+      ctx.fillText("HUVUDMENY", W/2, 25);
+
+      MAIN_MENU.forEach((m,i)=>{
+        const y = 30 + i*25;
+        const selected = i === this.mainMenuIndex;
+        this.rect(W/2-64, y, 128, 21, PAL.darkest);
+        this.rect(W/2-62, y+2, 124, 17, selected ? PAL.dark : PAL.lightest);
+        ctx.fillStyle = selected ? PAL.lightest : PAL.darkest;
+        ctx.font = "7px monospace";
+        ctx.fillText(m.label, W/2, y+10);
+        ctx.font = "5px monospace";
+        ctx.fillText(m.desc, W/2, y+17);
+      });
+
+      if(Math.floor(t*2)%2===0){
+        ctx.fillStyle = PAL.darkest;
+        ctx.font = "7px monospace";
+        ctx.fillText("TRYCK A = VÄLJ · ↑↓ BYT", W/2, 138);
+      }
+    }
     drawMenu(t){
       this.rect(0,0,W,H, PAL.lightest);
       const ctx = this.ctx;
@@ -1079,7 +1466,7 @@
       if(Math.floor(t*2)%2===0){
         ctx.fillStyle = PAL.darkest;
         ctx.font = "7px monospace";
-        ctx.fillText("TRYCK A = VÄLJ · ↑↓ BYT", W/2, 138);
+        ctx.fillText("TRYCK A = VÄLJ · HOME = TILLBAKA", W/2, 138);
       }
     }
     drawHUD(){
@@ -1098,7 +1485,7 @@
         ix += 7;
       });
 
-      if(this.gameMode === 'timeattack'){
+      if(this.gameMode === 'timeattack' && !this.isOnline){
         const urgent = this.timeLeft <= 10;
         if(!urgent || Math.floor(this.msgClock*4)%2===0){
           ctx.textAlign='right';
@@ -1106,6 +1493,13 @@
           ctx.font = "6px monospace";
           ctx.fillText("TID "+Math.ceil(this.timeLeft), W-8, 24);
         }
+      }
+
+      if(this.isOnline){
+        ctx.textAlign='right';
+        ctx.fillStyle = PAL.dark;
+        ctx.font = "5px monospace";
+        ctx.fillText("RUM "+(this.onlineCode||'----'), W-8, 24);
       }
 
       if(this.phase==='king'){
@@ -1199,6 +1593,10 @@
         ctx.closePath(); ctx.fill();
         ctx.strokeStyle = PAL.darkest;
         ctx.beginPath(); ctx.moveTo(this.aimX, y-16); ctx.lineTo(this.aimX, BASE_Y-2); ctx.stroke();
+      }
+      if(this.isOnline){
+        ctx.textAlign='center'; ctx.fillStyle = PAL.dark; ctx.font='5px monospace';
+        ctx.fillText('DIN TUR (SPELARE '+this.onlineRole+')', W/2, 130);
       }
       this.centerText("SIKTA", 138, PAL.darkest, 7);
     }
@@ -1590,8 +1988,13 @@
       if(a.t >= a.dur){
         const onDone = a.onDone;
         this.kingFallAnim = null;
-        if(onDone === 'gameover') this.endGame();
-        else this.state = 'roundclear';
+        if(onDone === 'gameover'){
+          this.endGame(); // endGame() grenar själv till onlineEndGame() när isOnline är true
+        } else if(this.isOnline){
+          this.pushOnlineRoundClear();
+        } else {
+          this.state = 'roundclear';
+        }
       }
     }
     drawKingFallScene(){
@@ -1762,7 +2165,7 @@
       if(Math.floor(this.msgClock*2)%2===0){
         ctx.fillStyle = PAL.darkest;
         ctx.font = "6px monospace";
-        ctx.fillText("←→/SEL = BYT · A = TILLBAKA", W/2, 140);
+        ctx.fillText("←→/SEL = BYT · HOME = TILLBAKA", W/2, 140);
       }
     }
     drawConfirmQuit(){
@@ -1775,9 +2178,9 @@
       ctx.textAlign='center';
       ctx.fillStyle = PAL.darkest;
       ctx.font = "8px monospace";
-      ctx.fillText("ÖVERGE RUNDAN?", W/2, 58);
+      ctx.fillText(this.isOnline ? "GE DIG?" : "ÖVERGE RUNDAN?", W/2, 58);
       ctx.font = "6px monospace";
-      ctx.fillText("FRAMSTEGET GÅR FÖRLORAT", W/2, 68);
+      ctx.fillText(this.isOnline ? "MOTSTÅNDAREN VINNER DÅ" : "FRAMSTEGET GÅR FÖRLORAT", W/2, 68);
 
       const optW = 44, optH = 16, gap = 8;
       const totalW = optW*2+gap;
@@ -1800,18 +2203,148 @@
       }
     }
 
+    // ---- online-skärmar ----
+    drawOnlineWaiting(){
+      this.rect(0,0,W,H, PAL.lightest);
+      const ctx = this.ctx;
+      ctx.textAlign='center';
+      ctx.fillStyle = PAL.darkest;
+      ctx.font = "10px monospace";
+      ctx.fillText("ONLINE-RUM", W/2, 16);
+
+      if(!this.onlineCode){
+        ctx.font = "7px monospace";
+        ctx.fillText(this.onlineBusyMessage || "SKAPAR RUM...", W/2, 60);
+      } else {
+        ctx.font = "6px monospace";
+        ctx.fillText("DIN RUMSKOD:", W/2, 44);
+
+        const charW = 24;
+        const chars = this.onlineCode.split('');
+        const totalW = chars.length*charW;
+        const startX = W/2 - totalW/2 + charW/2;
+        chars.forEach((ch,i)=>{
+          const x = startX + i*charW;
+          this.rect(x-10, 54, 20, 24, PAL.darkest);
+          this.rect(x-9, 55, 18, 22, PAL.dark);
+          ctx.fillStyle = PAL.lightest;
+          ctx.font = "16px monospace";
+          ctx.fillText(ch, x, 71);
+        });
+
+        ctx.fillStyle = PAL.darkest;
+        ctx.font = "5px monospace";
+        ctx.fillText("DELA KODEN MED EN VÄN", W/2, 92);
+        if(Math.floor(this.msgClock*2)%2===0){
+          ctx.font = "6px monospace";
+          ctx.fillText("VÄNTAR PÅ SPELARE 2...", W/2, 104);
+        }
+      }
+      ctx.fillStyle = PAL.dark;
+      ctx.font = "6px monospace";
+      ctx.fillText("HOME = AVBRYT", W/2, 134);
+    }
+    drawOnlineJoinEntry(){
+      this.rect(0,0,W,H, PAL.lightest);
+      const ctx = this.ctx;
+      ctx.textAlign='center';
+      ctx.fillStyle = PAL.darkest;
+      ctx.font = "10px monospace";
+      ctx.fillText("GÅ MED I RUM", W/2, 16);
+      ctx.font = "5px monospace";
+      ctx.fillText("ANGE VÄRDENS RUMSKOD", W/2, 28);
+
+      const charW = 22;
+      const totalW = this.joinChars.length*charW;
+      const startX = W/2 - totalW/2 + charW/2;
+      const y = 62;
+      this.joinChars.forEach((ch,i)=>{
+        const x = startX + i*charW;
+        const selected = i === this.joinCursor;
+        this.rect(x-9, y-13, 18, 20, PAL.darkest);
+        this.rect(x-8, y-12, 16, 18, selected ? PAL.dark : PAL.lightest);
+        ctx.fillStyle = selected ? PAL.lightest : PAL.darkest;
+        ctx.font = "13px monospace";
+        ctx.fillText(ch, x, y+3);
+        if(selected && Math.floor(this.msgClock*2.5)%2===0){
+          ctx.fillStyle = PAL.darkest;
+          ctx.font = "8px monospace";
+          ctx.fillText("▲", x, y-18);
+        }
+      });
+
+      ctx.fillStyle = PAL.darkest;
+      ctx.font = "6px monospace";
+      ctx.fillText("↑↓ BYT TECKEN · ←→ FLYTTA", W/2, 96);
+      if(this.onlineBusyMessage){
+        ctx.fillStyle = PAL.dark;
+        ctx.font = "6px monospace";
+        ctx.fillText(this.onlineBusyMessage, W/2, 110);
+      } else if(Math.floor(this.msgClock*2)%2===0){
+        ctx.font = "7px monospace";
+        ctx.fillText("TRYCK START = GÅ MED", W/2, 110);
+      }
+      ctx.fillStyle = PAL.dark;
+      ctx.font = "6px monospace";
+      ctx.fillText("HOME = TILLBAKA", W/2, 134);
+      this.drawMessage();
+    }
+    drawOnlineSpectate(){
+      this.drawScene();
+      // Repris av motståndarens senaste kast, rent kosmetiskt.
+      const sa = this.spectateThrowAnim;
+      if(sa){
+        sa.t += this._dt;
+        if(sa.t <= sa.dur){
+          const tt = Math.min(1, sa.t/sa.dur);
+          const x = sa.x0 + (sa.x1-sa.x0)*tt;
+          const yLinear = sa.y0 + (sa.y1-sa.y0)*tt;
+          const arc = Math.sin(Math.PI*tt) * 14;
+          this.drawBaton(x, yLinear-arc, tt*10, this.isKingThrowNow() ? (1-tt*0.6) : 1);
+        } else {
+          this.spectateThrowAnim = null;
+        }
+      }
+      this.drawHUD();
+      const otherPlayer = this.onlineRole === 1 ? 2 : 1;
+      if(Math.floor(this.msgClock*2)%2===0){
+        this.centerText('SPELARE '+otherPlayer+' SIKTAR...', 138, PAL.darkest, 6);
+      }
+      this.drawMessage();
+    }
+    drawOnlineGameOver(){
+      const ctx = this.ctx;
+      this.rect(0,0,W,H, PAL.darkest);
+      ctx.textAlign='center';
+      const won = this.onlineWinner === this.onlineRole;
+      ctx.fillStyle = won ? '#fff27a' : PAL.light;
+      ctx.font = "13px monospace";
+      ctx.fillText(won ? "DU VANN!" : "DU FÖRLORADE", W/2, 50);
+      ctx.font = "7px monospace";
+      ctx.fillStyle = PAL.light;
+      ctx.fillText("SPELARE "+(this.onlineWinner||'?')+" VANN MATCHEN", W/2, 68);
+      ctx.font = "6px monospace";
+      ctx.fillText("MATCHEN NÅDDE RUNDA "+this.round, W/2, 84);
+      if(Math.floor(this.msgClock*2)%2===0){
+        ctx.font = "7px monospace";
+        ctx.fillText("TRYCK START = MENY", W/2, 106);
+      }
+    }
+
     // ---- huvudloop ----
     loop(now){
       let dt = (now-this.last)/1000; this.last = now;
       dt = Math.min(dt, 0.05);
+      this._dt = dt;
       this.msgClock += dt;
       if(this.msgTimer>0) this.msgTimer -= dt;
       if(this.shake>0) this.shake = Math.max(0, this.shake-dt*40);
       if(this.flash>0) this.flash = Math.max(0, this.flash-dt);
 
       // Tid-utmaningens klocka ticker bara medan ett kast faktiskt pågår -
-      // inte i menyn, mellan rundor eller på game over-skärmen.
-      if(this.gameMode === 'timeattack' && ACTIVE_STATES.has(this.state)){
+      // inte i menyn, mellan rundor eller på game over-skärmen. (Gäller inte
+      // online-läget, som inte har någon tidsgräns.)
+      if(!this.isOnline && this.gameMode === 'timeattack' && ACTIVE_STATES.has(this.state)){
         this.timeLeft = Math.max(0, this.timeLeft - dt);
         if(this.timeLeft <= 0){
           this.message = 'TIDEN UTGICK!';
@@ -1841,7 +2374,9 @@
         this.updateSeagull(dt);
       }
 
-      if(this.state === 'menu'){
+      if(this.state === 'mainmenu'){
+        this.drawMainMenu(this.msgClock);
+      } else if(this.state === 'menu'){
         this.drawMenu(this.msgClock);
       } else if(this.state === 'aim'){
         this.aimT += dt*this.aimSpeed;
@@ -1884,6 +2419,14 @@
         this.drawHighscoreList();
       } else if(this.state === 'confirmQuit'){
         this.drawConfirmQuit();
+      } else if(this.state === 'onlinewaiting'){
+        this.drawOnlineWaiting();
+      } else if(this.state === 'onlinejoinentry'){
+        this.drawOnlineJoinEntry();
+      } else if(this.state === 'onlinespectate'){
+        this.drawOnlineSpectate();
+      } else if(this.state === 'onlinegameover'){
+        this.drawOnlineGameOver();
       }
 
       // Efter runda 5 (dvs från runda 6) inverteras hela skärmens färger, som en
@@ -1892,7 +2435,8 @@
       // redan ritats - en vit ruta ger en ren invertering, en färgad ruta ger en
       // invertering som dessutom är färgskiftad (klassiskt canvas-trick, kräver
       // inget CSS-filter som annars skulle påverka hela devicet, inte bara skärmen).
-      if(this.round >= INVERT_FROM_ROUND && this.state !== 'menu' && this.state !== 'highscoreList'){
+      const nonInvertStates = ['mainmenu','menu','highscoreList','onlinewaiting','onlinejoinentry','onlinegameover'];
+      if(this.round >= INVERT_FROM_ROUND && !nonInvertStates.includes(this.state)){
         ctx.save();
         ctx.globalCompositeOperation = 'difference';
         ctx.fillStyle = this.round >= INVERT_EXTRA_FROM_ROUND ? '#ff00c8' : '#ffffff';
@@ -1952,21 +2496,55 @@
 
 <!--
   ============================================================================
-  WiiKubbCloud - Firestore-backad global topplista.
-  Detta är en ES-modul (type="module"), så den laddas asynkront efter det
-  klassiska spelskriptet ovan. Den exponerar window.WiiKubbCloud med två
-  metoder som spelet anropar:
-    - submitScore(mode, name, round)  -> skickar ett resultat till molnet
-    - fetchTopScores(mode, topN)      -> hämtar topplistan för ett spelläge
-  samt skickar ut ett 'wiikubb-cloud-ready'-event när allt är klart, så att
-  spelet kan göra om en misslyckad hämtning så fort anslutningen finns.
+  WiiKubbCloud (Firestore) + WiiKubbRealtime (Realtime Database)
+  Detta är EN ES-modul (type="module"), laddad asynkront efter det klassiska
+  spelskriptet ovan. Den initierar Firebase EN gång och exponerar:
 
-  VIKTIGT - du måste göra två saker i Firebase-konsolen innan detta fungerar:
-  1. Slå på Firestore Database (Native mode) för projektet "wii-kubb".
-  2. Sätt säkerhetsregler som tillåter att skapa nya dokument men inte att
-     ändra/radera andras, samt validerar att fälten ser rimliga ut. Se
-     förslag i mitt svar i chatten - jag kan inte sätta detta åt dig
-     eftersom det görs i Firebase-konsolen, inte i den här filen.
+    window.WiiKubbCloud  - globala highscore-listan (oförändrad sedan tidigare)
+      - submitScore(mode, name, round)
+      - fetchTopScores(mode, topN)
+
+    window.WiiKubbRealtime - online-rum för turordningsbaserad multiplayer
+      - createRoom(hostId, initialPayload) -> Promise<code|null>
+      - joinRoom(code, guestId)            -> Promise<{ok, data|reason}>
+      - listenRoom(code, callback)         -> avsluta-funktion (unsubscribe)
+      - updateRoom(code, partialData)
+      - endRoom(code)
+
+  samt skickar ut 'wiikubb-cloud-ready' och 'wiikubb-realtime-ready' när
+  respektive del är redo.
+
+  VIKTIGT - saker du (eller den som äger Firebase-projektet) behöver göra
+  i Firebase-konsolen innan ONLINE-RUMMEN fungerar:
+
+  1. databaseURL nedan MÅSTE stämma exakt med er Realtime Database.
+     Öppna Firebase-konsolen -> Build -> Realtime Database -> fliken
+     "Data" - webbadressen som visas högst upp på den sidan (t.ex.
+     "https://wii-kubb-default-rtdb.europe-west1.firebasedatabase.app")
+     är den ni ska klistra in här. Jag har satt in en rimlig gissning,
+     men skriv om den om den inte stämmer - annars kommer online-läget
+     tyst att visa "ONLINE OTILLGÄNGLIGT" istället för att krascha.
+
+  2. Sätt säkerhetsregler för Realtime Database som ungefär motsvarar:
+     {
+       "rules": {
+         "rooms": {
+           "$code": {
+             ".read": true,
+             ".write": true,
+             ".validate": "newData.hasChildren(['status','turn','round'])"
+           }
+         }
+       }
+     }
+     Detta är medvetet enkelt (ingen inloggning krävs för att spela) -
+     vill ni skydda mot missbruk kan ni t.ex. lägga till Firebase
+     Anonymous Auth och kräva "auth != null" i reglerna. Det gör jag inte
+     åt er här eftersom det görs i Firebase-konsolen/med extra SDK-import,
+     inte i den här filen.
+
+  3. Firestore-reglerna för highscore-listan (från tidigare) påverkas inte
+     av detta - de kan vara kvar precis som de är.
   ============================================================================
 -->
 <script type="module">
@@ -1975,11 +2553,16 @@
   import {
     getFirestore, collection, addDoc, query, where, orderBy, limit, getDocs, serverTimestamp
   } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js";
+  import {
+    getDatabase, ref, set, update, onValue, off, runTransaction, serverTimestamp as rtdbServerTimestamp
+  } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-database.js";
 
   // Your web app's Firebase configuration
   const firebaseConfig = {
     apiKey: "AIzaSyBJ5TLp_W-g_3GcyHJDTUs6Bao_ST05wvQ",
     authDomain: "wii-kubb.firebaseapp.com",
+    // ▼▼▼ KONTROLLERA DENNA MOT "Realtime Database"-fliken i konsolen! ▼▼▼
+    databaseURL: "https://wii-kubb-default-rtdb.europe-west1.firebasedatabase.app",
     projectId: "wii-kubb",
     storageBucket: "wii-kubb.firebasestorage.app",
     messagingSenderId: "537067638054",
@@ -1992,6 +2575,7 @@
   // det ska aldrig hindra själva spelet eller topplistan från att fungera.
   try{ getAnalytics(app); }catch(e){ console.warn('Firebase Analytics kunde inte starta:', e); }
 
+  // ---------------- Firestore: global highscore-lista (oförändrad) ----------------
   const db = getFirestore(app);
   const SCORES_COLLECTION = 'scores';
   const VALID_MODES = new Set(['classic', 'timeattack']);
@@ -2043,6 +2627,94 @@
 
   window.WiiKubbCloud = { submitScore, fetchTopScores, ready: true };
   window.dispatchEvent(new Event('wiikubb-cloud-ready'));
+
+  // ---------------- Realtime Database: online-rum (turordningsbaserad multiplayer) ----------------
+  const ROOM_CODE_CHARSET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // undviker lätt förväxlade tecken (0/O, 1/I)
+  const ROOM_CODE_LEN = 4;
+  const ROOM_CREATE_ATTEMPTS = 8; // hur många gånger vi försöker slumpa en ledig kod innan vi ger upp
+
+  function randomRoomCode(){
+    let s = '';
+    for(let i=0;i<ROOM_CODE_LEN;i++) s += ROOM_CODE_CHARSET[Math.floor(Math.random()*ROOM_CODE_CHARSET.length)];
+    return s;
+  }
+
+  let rtdb = null;
+  try{
+    rtdb = getDatabase(app);
+  }catch(err){
+    console.error('WiiKubbRealtime: kunde inte initiera Realtime Database - kontrollera databaseURL', err);
+  }
+
+  async function createRoom(hostId, initialPayload){
+    if(!rtdb) return null;
+    for(let attempt=0; attempt<ROOM_CREATE_ATTEMPTS; attempt++){
+      const code = randomRoomCode();
+      const roomRef = ref(rtdb, 'rooms/' + code);
+      try{
+        const result = await runTransaction(roomRef, (current)=>{
+          if(current !== null) return; // upptagen kod - avbryt transaktionen, försök med en ny
+          return Object.assign({
+            status: 'waiting',
+            hostId, guestId: null,
+            createdAt: rtdbServerTimestamp(),
+            updatedAt: rtdbServerTimestamp()
+          }, initialPayload);
+        });
+        if(result.committed) return code;
+      }catch(err){
+        console.error('WiiKubbRealtime: kunde inte skapa rum', err);
+        return null;
+      }
+    }
+    return null; // osannolikt - alla slumpade koder var upptagna flera gånger i rad
+  }
+
+  async function joinRoom(code, guestId){
+    if(!rtdb) return {ok:false, reason:'error'};
+    code = String(code || '').toUpperCase();
+    const roomRef = ref(rtdb, 'rooms/' + code);
+    try{
+      const result = await runTransaction(roomRef, (current)=>{
+        if(current === null) return current; // rummet finns inte - avbryt utan ändring
+        if(current.status !== 'waiting' || current.guestId) return; // upptaget/redan startat - avbryt
+        current.status = 'active';
+        current.guestId = guestId;
+        current.updatedAt = rtdbServerTimestamp();
+        return current;
+      });
+      if(!result.committed){
+        return {ok:false, reason: result.snapshot.exists() ? 'full' : 'notfound'};
+      }
+      return {ok:true, data: result.snapshot.val()};
+    }catch(err){
+      console.error('WiiKubbRealtime: kunde inte gå med i rum', err);
+      return {ok:false, reason:'error'};
+    }
+  }
+
+  function listenRoom(code, cb){
+    if(!rtdb) return ()=>{};
+    const roomRef = ref(rtdb, 'rooms/' + code);
+    const handler = (snap)=>cb(snap.val());
+    onValue(roomRef, handler);
+    return ()=>off(roomRef, 'value', handler);
+  }
+
+  function updateRoom(code, data){
+    if(!rtdb || !code) return Promise.resolve();
+    const roomRef = ref(rtdb, 'rooms/' + code);
+    return update(roomRef, Object.assign({}, data, {updatedAt: rtdbServerTimestamp()}))
+      .catch(err=>{ console.error('WiiKubbRealtime: kunde inte uppdatera rum', err); });
+  }
+
+  function endRoom(code){
+    if(!rtdb || !code) return;
+    updateRoom(code, {status:'ended'});
+  }
+
+  window.WiiKubbRealtime = { createRoom, joinRoom, listenRoom, updateRoom, endRoom, ready: !!rtdb };
+  window.dispatchEvent(new Event('wiikubb-realtime-ready'));
 </script>
 
 </body>
