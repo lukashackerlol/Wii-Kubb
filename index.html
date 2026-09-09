@@ -2181,9 +2181,11 @@
 
       this.rect(W/2-46, 44, 92, 34, PAL.darkest);
       this.rect(W/2-44, 46, 88, 30, PAL.lightest);
+      ctx.fillStyle = PAL.darkest;
       ctx.font = "18px monospace";
       ctx.fillText(this.roomCode || '----', W/2, 68);
 
+      ctx.fillStyle = PAL.darkest;
       if(Math.floor(this.msgClock*2)%2===0){
         ctx.font = "7px monospace";
         ctx.fillText("VÄNTAR PÅ SPELARE 2...", W/2, 96);
