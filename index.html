@@ -262,7 +262,12 @@
 
   // ---------------- Konstanter (delas av alla instanser, allokeras en gång) ----------------
   const W = 160, H = 144;
-  const PAL = { darkest:'#0f380f', dark:'#306230', light:'#8bac0f', lightest:'#9bbc0f' };
+  // PAL muteras live varje frame beroende på "stämningsläge" (se
+  // getVisualStage/paletteForStage) - alla ritfunktioner läser PAL.xxx vid
+  // ritningstillfället, så en enda omfärgning här räcker för att skifta om
+  // hela planen, kubbarna, kungen och texten utan att röra varje ritfunktion.
+  const PAL_DEFAULT = { darkest:'#0f380f', dark:'#306230', light:'#8bac0f', lightest:'#9bbc0f' };
+  const PAL = { ...PAL_DEFAULT };
   // Kungen står nu mellan spelaren och klossarna (inte längre bakom klossarna),
   // så KING_Y ligger mellan klossraden (KUBB_Y) och spelarens baslinje (BASE_Y).
   const KUBB_Y = 40, KING_Y = 92, BASE_Y = 132, KING_X = 80;
@@ -327,8 +332,12 @@
   };
   const TIME_ATTACK_START = 60;      // sekunder vid start
   const TIME_BONUS_PER_ROUND = 10;   // bonussekunder när en runda klaras
-  const INVERT_FROM_ROUND = 6;       // efter runda 5 (dvs från runda 6) inverteras skärmens färger
-  const INVERT_EXTRA_FROM_ROUND = 10; // från runda 10 skiftar färgerna ytterligare
+  // Stämningsläget eskalerar med rundan i lokalt läge (gäller aldrig
+  // online, där this.round alltid stannar på 1): natt -> berusad -> psykedelisk -> helvete.
+  const NIGHT_FROM_ROUND = 6;         // efter runda 5
+  const TIPSY_FROM_ROUND = 11;        // efter runda 10
+  const PSYCHEDELIC_FROM_ROUND = 16;  // efter runda 15
+  const HELL_FROM_ROUND = 20;         // från och med runda 20
   const ACTIVE_STATES = new Set(['aim','power','throw','overpower']); // tillstånd där tid-utmaningens klocka ska ticka (bara lokalt läge)
   const NAME_CHARSET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ';
   const NAME_LEN = 6;          // antal tecken i namnet på highscore-listan
@@ -510,6 +519,8 @@
       this.seagull = null; // {t,dur,y,dir} - fiskmåsen som flyger över skärmen, eller null om ingen är i luften
       this.seagullCooldown = SEAGULL_GAP_MIN + Math.random()*(SEAGULL_GAP_MAX-SEAGULL_GAP_MIN);
       this.seagullHitAnim = null; // {t,dur,x,y} - spelas upp när man råkar träffa fiskmåsen
+      this.currentStage = 'normal'; // stämningsläge för lokalt läge, se getVisualStage()
+      this.hellParticles = []; // eldgnistor i helvete-läget
 
       this.msgClock = 0;
       this.last = performance.now();
@@ -1754,12 +1765,132 @@
     isKingThrowNow(){
       return this.phase === 'king' && (this.state === 'aim' || this.state === 'power' || this.state === 'throw');
     }
+
+    // ---- stämningsläge (lokalt läge) - eskalerar med rundan ----
+    // 1-5: normalt · 6-10: natt · 11-15: berusad (svajande) · 16-19: psykedeliskt
+    // (regnbågsfärger + kubbspöken) · 20+: helvete (eld + kubbarna darrar).
+    // Rena visuella lager ovanpå samma spellogik - KUBB_XS/träffdetektion rörs
+    // aldrig, bara hur saker RITAS.
+    getVisualStage(){
+      if(this.matchType === 'online') return 'normal';
+      if(this.state === 'menu' || this.state === 'highscoreList') return 'normal';
+      if(this.round >= HELL_FROM_ROUND) return 'hell';
+      if(this.round >= PSYCHEDELIC_FROM_ROUND) return 'psychedelic';
+      if(this.round >= TIPSY_FROM_ROUND) return 'tipsy';
+      if(this.round >= NIGHT_FROM_ROUND) return 'night';
+      return 'normal';
+    }
+    // Räknar fram den här framens palett för stämningsläget och muterar PAL
+    // på plats (se kommentaren vid PAL_DEFAULT). t = en stigande klocka i
+    // sekunder, används för att animera psykedeliskt/helvete-läget.
+    applyStagePalette(stage, t){
+      let p;
+      if(stage === 'night' || stage === 'tipsy'){
+        p = { darkest:'#0a1030', dark:'#1c2f66', light:'#3d5aa0', lightest:'#7f9fd6' };
+      } else if(stage === 'psychedelic'){
+        const hue = (t*46) % 360;
+        p = {
+          darkest: `hsl(${hue},85%,16%)`,
+          dark: `hsl(${(hue+45)%360},85%,32%)`,
+          light: `hsl(${(hue+90)%360},90%,55%)`,
+          lightest: `hsl(${(hue+150)%360},95%,74%)`
+        };
+      } else if(stage === 'hell'){
+        const flick = Math.sin(t*8)*6;
+        p = {
+          darkest: `hsl(${6+flick*0.3},90%,10%)`,
+          dark: `hsl(${14+flick},95%,28%)`,
+          light: `hsl(${28+flick},100%,50%)`,
+          lightest: `hsl(${42+flick},100%,66%)`
+        };
+      } else {
+        p = PAL_DEFAULT;
+      }
+      PAL.darkest = p.darkest; PAL.dark = p.dark; PAL.light = p.light; PAL.lightest = p.lightest;
+    }
+    // Svaj/rotation för berusad-läget och uppåt - hela ritningen roteras en
+    // liten bit fram och tillbaka runt mitten. Läggs på UTANPÅ den vanliga
+    // skak-effekten (impact shake), inte istället för den.
+    stageSwayAngle(stage, t){
+      if(stage === 'tipsy') return Math.sin(t*1.3) * 0.05;
+      if(stage === 'psychedelic') return Math.sin(t*1.8) * 0.075;
+      if(stage === 'hell') return Math.sin(t*2.2) * 0.095;
+      return 0;
+    }
+    // Ett gäng stjärnor på fasta (pseudo-slumpade) positioner som blinkar
+    // sakta - allt från natt-läget och uppåt.
+    drawNightStars(t){
+      const ctx = this.ctx;
+      ctx.save();
+      for(let i=0;i<14;i++){
+        const sx = 10 + this.pseudoRandom(i,11)*(W-20);
+        const sy = 9 + this.pseudoRandom(i,22)*46;
+        const twinkle = 0.4 + 0.5*Math.abs(Math.sin(t*1.1 + i*1.9));
+        ctx.globalAlpha = twinkle;
+        this.rect(sx, sy, 1, 1, '#f4f6ff');
+      }
+      ctx.restore();
+    }
+    // Ett litet gäng halvgenomskinliga "kubbspöken" som glider runt i sina
+    // egna banor, helt oberoende av det riktiga spelet - rent atmosfäriskt,
+    // från och med psykedeliskt-läget.
+    drawGhostKubbs(t){
+      const ctx = this.ctx;
+      ctx.save();
+      for(let i=0;i<5;i++){
+        const speed = 0.4 + i*0.13;
+        const phase = i*1.7;
+        const gx = W/2 + Math.sin(t*speed + phase) * (38 + i*9);
+        const gy = 70 + Math.cos(t*speed*0.8 + phase*1.3) * (46 + i*5);
+        ctx.globalAlpha = 0.18 + 0.09*Math.sin(t*1.5 + i);
+        const c = `hsl(${(t*30 + i*70)%360},80%,82%)`;
+        this.rect(gx-4, gy-7, 8, 14, c);
+      }
+      ctx.restore();
+    }
+    // Eldgnistor som far uppåt från nederkanten i helvete-läget.
+    updateHellParticles(dt){
+      this.hellParticles = this.hellParticles || [];
+      if(Math.random() < dt*14 && this.hellParticles.length < 60){
+        this.hellParticles.push({
+          x: 10 + Math.random()*(W-20), y: H-4,
+          vx: (Math.random()-0.5)*10, vy: -(18+Math.random()*22),
+          life: 0, maxLife: 0.8+Math.random()*0.6, size: 1+Math.random()*2
+        });
+      }
+      this.hellParticles.forEach(p=>{ p.life += dt; p.x += p.vx*dt; p.y += p.vy*dt; });
+      this.hellParticles = this.hellParticles.filter(p => p.life < p.maxLife && p.y > -6);
+    }
+    drawHellParticles(){
+      const ctx = this.ctx;
+      ctx.save();
+      (this.hellParticles||[]).forEach(p=>{
+        const p01 = p.life/p.maxLife;
+        ctx.globalAlpha = Math.max(0, 1-p01) * 0.85;
+        const c = p01 < 0.5 ? '#ffcf4d' : (p01 < 0.8 ? '#ff6a1f' : '#5a1400');
+        this.rect(p.x-p.size/2, p.y-p.size/2, p.size, p.size, c);
+      });
+      ctx.restore();
+    }
+
     drawScene(){
       if(this.isKingThrowNow()) this.drawSceneFrontal(); else this.drawSceneTopDown();
     }
     drawSceneTopDown(){
       this.drawField();
-      this.kubbs.forEach(k=>{ if(k.standing) this.drawKubb(k.x, KUBB_Y, true); });
+      // I helvete-läget darrar de stående kubbarna - rent visuellt, bara
+      // ritpositionen rubbas en aning (k.x/KUBB_Y som faktiskt används för
+      // träffdetektionen i resolveThrow rörs aldrig).
+      const jitter = this.currentStage === 'hell';
+      this.kubbs.forEach(k=>{
+        if(!k.standing) return;
+        let jx=0, jy=0;
+        if(jitter){
+          const jt = this.msgClock*6 + k.x;
+          jx = Math.sin(jt)*2.2; jy = Math.cos(jt*1.3)*1.6;
+        }
+        this.drawKubb(k.x+jx, KUBB_Y+jy, true);
+      });
       this.fallenPieces.forEach(p=>{
         if(p.type==='kubb') this.drawKubb(p.x,p.y,false);
         // medan fall-animationen spelas ritar vi kungen separat nedan istället
@@ -2614,8 +2745,21 @@
       }
 
       const ctx = this.ctx;
+      // Stämningsläget (natt/berusad/psykedeliskt/helvete) räknas fram en
+      // gång per frame - både paletten och svaj-effekten nedan, plus
+      // overlay-passet i slutet, läser alla samma värde.
+      this.currentStage = this.getVisualStage();
+      this.applyStagePalette(this.currentStage, this.msgClock);
+      if(this.currentStage === 'hell') this.updateHellParticles(dt);
+
       ctx.save();
       if(this.shake>0) ctx.translate((Math.random()-0.5)*this.shake, (Math.random()-0.5)*this.shake);
+      const sway = this.stageSwayAngle(this.currentStage, this.msgClock);
+      if(sway !== 0){
+        ctx.translate(W/2, H/2);
+        ctx.rotate(sway);
+        ctx.translate(-W/2, -H/2);
+      }
 
       if(this.isKingThrowNow()){
         // Specialkastet: skärmen vänds upp och ned för att simulera att
@@ -2696,18 +2840,18 @@
         this.drawOnlineRoundResult();
       }
 
-      // Efter runda 5 (dvs från runda 6) inverteras hela skärmens färger, som en
-      // extra svårighetskrydda. Från runda 10 skiftar färgerna ytterligare ett
-      // steg. Görs genom att rita en ruta med "difference"-blend ovanpå allt som
-      // redan ritats - en vit ruta ger en ren invertering, en färgad ruta ger en
-      // invertering som dessutom är färgskiftad (klassiskt canvas-trick, kräver
-      // inget CSS-filter som annars skulle påverka hela devicet, inte bara skärmen).
-      if(this.round >= INVERT_FROM_ROUND && this.state !== 'menu' && this.state !== 'highscoreList'){
-        ctx.save();
-        ctx.globalCompositeOperation = 'difference';
-        ctx.fillStyle = this.round >= INVERT_EXTRA_FROM_ROUND ? '#ff00c8' : '#ffffff';
-        ctx.fillRect(0,0,W,H);
-        ctx.restore();
+      // Overlay-effekter för stämningsläget - ritas ovanpå allt annat men
+      // fortfarande INNANFÖR samma ctx.save()-block (så svaj-rotationen och
+      // skärmskakningen ovan gäller dem också, de ska kännas som en del av
+      // samma skakiga värld, inte fastklistrade ovanpå).
+      if(this.currentStage === 'night' || this.currentStage === 'tipsy'){
+        this.drawNightStars(this.msgClock);
+      } else if(this.currentStage === 'psychedelic'){
+        this.drawNightStars(this.msgClock);
+        this.drawGhostKubbs(this.msgClock);
+      } else if(this.currentStage === 'hell'){
+        this.drawGhostKubbs(this.msgClock);
+        this.drawHellParticles();
       }
 
       if(this.flash>0){
