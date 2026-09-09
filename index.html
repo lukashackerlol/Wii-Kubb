@@ -1,0 +1,1566 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="UTF-8">
+<title>WII-KUBB</title>
+<style>
+  :root{
+    --shell:#c7c6d9;
+    --shell-dark:#9a99b3;
+    --shell-shadow:#75748f;
+    --screen-bezel:#2b2b3a;
+    --lcd-off:#8b9a5b;
+  }
+  *{box-sizing:border-box; user-select:none; -webkit-user-select:none;}
+  html,body{
+    height:100%; margin:0;
+    background:radial-gradient(circle at 50% 20%, #4a4a63, #201f2b 70%);
+    display:flex; align-items:center; justify-content:center;
+    font-family:'Courier New', monospace;
+    overflow:hidden;
+  }
+  .device{
+    width:min(94vw, 520px);
+    background:linear-gradient(160deg, var(--shell) 0%, var(--shell-dark) 100%);
+    border-radius:22px 22px 60px 22px;
+    padding:22px 22px 30px;
+    box-shadow:
+      0 10px 0 var(--shell-shadow),
+      0 18px 30px rgba(0,0,0,.6),
+      inset 0 2px 2px rgba(255,255,255,.5);
+    position:relative;
+  }
+  .brand{
+    text-align:right;
+    font-style:italic;
+    font-weight:bold;
+    letter-spacing:2px;
+    color:#4b4a68;
+    font-size:15px;
+    padding:0 6px 6px 0;
+  }
+  .brand span{color:#7a5fd6;}
+  .screen-frame{
+    background:var(--screen-bezel);
+    border-radius:8px;
+    padding:16px 16px 22px;
+    box-shadow: inset 0 0 0 3px #111119, inset 0 6px 14px rgba(0,0,0,.6);
+  }
+  .screen-label{
+    display:flex; justify-space-between; align-items:center;
+    padding:2px 4px 8px;
+  }
+  .screen-label .dot{width:8px;height:8px;border-radius:50%;background:#4fc3f7;box-shadow:0 0 4px #4fc3f7;}
+  .screen-label span{color:#9a9ab8; font-size:10px; letter-spacing:1px;}
+  #gameCanvas{
+    display:block;
+    width:100%;
+    aspect-ratio:160/144;
+    image-rendering:pixelated;
+    image-rendering:crisp-edges;
+    background:#9bbc0f;
+    border-radius:2px;
+  }
+  .controls{
+    display:flex; justify-content:space-between; align-items:center;
+    margin-top:26px; padding:0 6px;
+  }
+  .dpad{
+    position:relative; width:96px; height:96px;
+  }
+  .dpad .bar{position:absolute; background:#38374a; border-radius:4px; box-shadow:inset 0 2px 2px rgba(255,255,255,.15), 0 2px 2px rgba(0,0,0,.4);}
+  .dpad .v{left:34px; top:0; width:28px; height:96px;}
+  .dpad .h{left:0; top:34px; width:96px; height:28px;}
+  .dpad .center{position:absolute; left:34px; top:34px; width:28px; height:28px; background:#2c2b3b; border-radius:5px;}
+  .abbtns{
+    display:flex; gap:14px; align-items:flex-end; transform:rotate(-18deg);
+  }
+  .btn{
+    width:52px; height:52px; border-radius:50%;
+    background:radial-gradient(circle at 35% 30%, #b0518c, #7a2f61 70%);
+    box-shadow:0 5px 0 #4c1c3d, inset 0 2px 2px rgba(255,255,255,.3);
+    color:#f3d6e6; font-weight:bold; font-size:15px;
+    display:flex; align-items:center; justify-content:center;
+    cursor:pointer; border:none;
+  }
+  .btn:active{ transform:translateY(3px); box-shadow:0 2px 0 #4c1c3d;}
+  .btn.a{margin-top:-14px;}
+  .meta-row{
+    display:flex; justify-content:center; gap:26px; margin-top:22px;
+  }
+  .pill{
+    background:#38374a; color:#c9c8de; font-size:9px; letter-spacing:1px;
+    padding:6px 16px; border-radius:10px; transform:rotate(-8deg);
+    box-shadow:0 2px 0 #23222f;
+    cursor:pointer; border:none;
+  }
+  .pill:active{transform:rotate(-8deg) translateY(2px);}
+  .speaker{
+    position:absolute; right:26px; bottom:20px;
+    display:grid; grid-template-columns:repeat(4,6px); gap:6px;
+    transform:rotate(-18deg);
+  }
+  .speaker div{width:6px; height:22px; background:var(--shell-dark); border-radius:3px; box-shadow:inset 0 0 0 1px var(--shell-shadow);}
+  .hint{
+    text-align:center; color:#4b4a68; font-size:10px; margin-top:14px; letter-spacing:.5px;
+  }
+</style>
+</head>
+<body>
+
+<div class="device">
+  <div class="brand">WII-KUBB <span>BOY</span></div>
+
+  <div class="screen-frame">
+    <div class="screen-label"><span>● SPEL PÅ</span><div class="dot"></div></div>
+    <canvas id="gameCanvas" width="480" height="432"></canvas>
+  </div>
+
+  <div class="controls">
+    <div class="dpad">
+      <div class="bar v"></div>
+      <div class="bar h"></div>
+      <div class="center"></div>
+    </div>
+    <div class="abbtns">
+      <button class="btn b" id="btnB">B</button>
+      <button class="btn a" id="btnA">A</button>
+    </div>
+  </div>
+
+  <div class="meta-row">
+    <button class="pill" id="btnSelect">SELECT</button>
+    <button class="pill" id="btnMenu">HOME</button>
+    <button class="pill" id="btnStart">START</button>
+  </div>
+
+  <div class="speaker">
+    <div></div><div></div><div></div><div></div>
+  </div>
+
+  <div class="hint">A / MELLANSLAG = LÅS · B = LJUD PÅ/AV</div>
+</div>
+
+<script>
+(function(){
+  'use strict';
+
+  // ---------------- Konstanter (delas av alla instanser, allokeras en gång) ----------------
+  const W = 160, H = 144;
+  const PAL = { darkest:'#0f380f', dark:'#306230', light:'#8bac0f', lightest:'#9bbc0f' };
+  // Kungen står nu mellan spelaren och klossarna (inte längre bakom klossarna),
+  // så KING_Y ligger mellan klossraden (KUBB_Y) och spelarens baslinje (BASE_Y).
+  const KUBB_Y = 40, KING_Y = 92, BASE_Y = 132, KING_X = 80;
+  const KING_HIT_TOL = 9; // hur nära Kungens x-position ett kast måste landa för att räknas som en träff på honom
+  const HORIZON_Y = 80;   // marken i frontalvyn för kunga-kastet
+  const KUBB_XS = [30,55,80,105,130];
+  const OVER_CLOSEUP_DUR = 0.7, OVER_IMPACT_DUR = 0.35, OVER_REACT_DUR = 1.3;
+  // "Jorden runt"-varianten är en längre, tydligare specialsekvens med ett eget
+  // tajmings-moment: spelaren måste trycka A i rätt ögonblick för att fånga
+  // pinnen när den kommer tillbaka, och belönas då med ett extra kast.
+  const OVER_EARTH_LAUNCH_DUR = 0.55;   // pinnen skjuts upp i skyn och försvinner ur bild
+  const OVER_EARTH_ORBIT_DUR = 2.6;     // tydligt, långsammare varv runt jordklotet
+  const OVER_EARTH_CATCH_DUR = 1.3;     // hela tidsfönstret spelaren har på sig att trycka A
+  const OVER_EARTH_CATCH_CENTER = 0.55; // var i tidsfönstret (0-1) den perfekta fångst-tajmingen ligger
+  const OVER_EARTH_CATCH_TOL = 0.14;    // hur nära perfekt tajming man måste trycka (andel av tidsfönstret)
+  const OVER_EARTH_CAUGHT_DUR = 1.1;    // jubel-sekvens vid lyckad fångst
+
+  // ---- spellägen (huvudmenyn) ----
+  const MODES = [
+    {id:'classic',    label:'KLASSISKT',    desc:'FÄLL KUBBAR + KUNGEN'},
+    {id:'timeattack',  label:'TID-UTMANING', desc:'SPRING MOT KLOCKAN'},
+    {id:'highscores',  label:'HIGHSCORE',   desc:'TOPP 5 LISTA'}
+  ];
+  const TIME_ATTACK_START = 60;      // sekunder vid start
+  const TIME_BONUS_PER_ROUND = 10;   // bonussekunder när en runda klaras
+  const INVERT_FROM_ROUND = 6;       // efter runda 5 (dvs från runda 6) inverteras skärmens färger
+  const INVERT_EXTRA_FROM_ROUND = 10; // från runda 10 skiftar färgerna ytterligare
+  const ACTIVE_STATES = new Set(['aim','power','throw','overpower']); // tillstånd där tid-utmaningens klocka ska ticka
+  const NAME_CHARSET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ';
+  const NAME_LEN = 6;          // antal tecken i namnet på highscore-listan
+  const HIGHSCORE_KEY = 'wiiKubbHighscores';
+  const MAX_HIGHSCORES = 5;
+
+  // 8-bitars bakgrundsmusik (svensk folkmelodi-loop), 0 = paus/tystnad.
+  const MUSIC_NOTE_DUR = 0.24;
+  const FOLK_MELODY = [
+    392,440,494,440, 392,349,392,0,
+    440,494,523,494, 440,392,349,0,
+    392,440,494,523, 494,440,392,349,
+    330,349,392,0,   349,330,294,0
+  ];
+  const FOLK_BASS = [
+    196,0,196,0, 175,0,175,0,
+    220,0,220,0, 196,0,175,0,
+    196,0,196,0, 175,0,165,0,
+    165,0,147,0, 147,0,147,0
+  ];
+
+  // ---------------- Ljudmotor ----------------
+  // Musiken schemaläggs numera mot Web Audios egen klocka (ett "lookahead"-
+  // schema, samma teknik som t.ex. spelmotorer och DAW:ar använder) istället
+  // för att förlita sig på setInterval för själva tajmingen av varje ton.
+  // setInterval drivs av huvudtråden och kan halka efter (t.ex. vid tunga
+  // ritningar), vilket ger hackig, drivande musik. Här används setInterval
+  // enbart som en billig "väckarklocka" var 25:e ms för att kolla om det är
+  // dags att lägga in fler noter i ljudkortets egen, exakta kö - musiken
+  // förblir alltså perfekt i takt oavsett vad huvudtråden gör.
+  class AudioEngine {
+    constructor(){
+      this.ctx = null;
+      this.soundOn = true;
+      this.musicOn = true;
+      this.musicStep = 0;
+      this.nextNoteTime = 0;
+      this.schedulerId = null;
+      this.LOOKAHEAD_MS = 25;
+      this.SCHEDULE_AHEAD_S = 0.1;
+    }
+    ensure(){
+      if(!this.ctx){
+        try{ this.ctx = new (window.AudioContext||window.webkitAudioContext)(); }catch(e){}
+      }
+      if(this.ctx) this.startMusic();
+    }
+    tone(freq, dur, type, gain, when){
+      if(!this.soundOn || !this.ctx) return;
+      const o = this.ctx.createOscillator();
+      const g = this.ctx.createGain();
+      o.type = type;
+      o.frequency.value = freq;
+      g.gain.value = gain;
+      o.connect(g); g.connect(this.ctx.destination);
+      o.start(when);
+      g.gain.exponentialRampToValueAtTime(0.0008, when + dur*0.9);
+      o.stop(when + dur);
+    }
+    beep(freq, dur, type){
+      if(!this.ctx) return;
+      this.tone(freq, dur, type||'square', 0.06, this.ctx.currentTime);
+    }
+    sfxLock(){ this.beep(520,0.08,'square'); }
+    sfxThrow(){ this.beep(300,0.1,'square'); }
+    sfxHit(){ this.beep(150,0.15,'square'); this.beep(90,0.2,'square'); }
+    sfxMiss(){ this.beep(140,0.2,'sawtooth'); }
+    sfxWin(){ [660,880,1046,1318].forEach((f,i)=>setTimeout(()=>this.beep(f,0.18,'square'), i*110)); }
+    sfxOver(){ [400,300,200,120].forEach((f,i)=>setTimeout(()=>this.beep(f,0.22,'sawtooth'), i*140)); }
+
+    scheduleNote(step, time){
+      const i = step % FOLK_MELODY.length;
+      const lead = FOLK_MELODY[i], bass = FOLK_BASS[i];
+      if(lead > 0) this.tone(lead, MUSIC_NOTE_DUR, 'triangle', 0.05, time);
+      if(bass > 0) this.tone(bass, MUSIC_NOTE_DUR, 'square', 0.025, time);
+    }
+    scheduler(){
+      while(this.nextNoteTime < this.ctx.currentTime + this.SCHEDULE_AHEAD_S){
+        this.scheduleNote(this.musicStep, this.nextNoteTime);
+        this.nextNoteTime += MUSIC_NOTE_DUR;
+        this.musicStep++;
+      }
+    }
+    startMusic(){
+      if(this.schedulerId || !this.musicOn || !this.ctx) return;
+      this.nextNoteTime = this.ctx.currentTime + 0.05;
+      this.scheduler();
+      this.schedulerId = setInterval(()=>this.scheduler(), this.LOOKAHEAD_MS);
+    }
+    stopMusic(){
+      if(this.schedulerId){ clearInterval(this.schedulerId); this.schedulerId = null; }
+    }
+    toggleSound(){
+      this.soundOn = !this.soundOn;
+      this.musicOn = this.soundOn;
+      this.ensure();
+      this.beep(this.soundOn?700:200, 0.08, 'square');
+      if(this.musicOn) this.startMusic(); else this.stopMusic();
+    }
+  }
+
+  // ---------------- Spelet ----------------
+  class KubbGame {
+    constructor(canvas){
+      this.canvas = canvas;
+      this.ctx = canvas.getContext('2d');
+      this.ctx.imageSmoothingEnabled = false;
+      this.ctx.scale(3,3);
+      this.audio = new AudioEngine();
+
+      this.state = 'menu'; // menu, aim, power, throw, overpower, roundclear, gameover, nameentry, highscoreList, confirmQuit
+      this.gameMode = 'classic'; // 'classic' | 'timeattack'
+      this.menuIndex = 0;
+      this.timeLeft = 0;
+      this.round = 1;
+      // Bekräftelsedialog för MENY-knappen - avbryter/pausar rundan tills man svarar.
+      this.previousState = null;
+      this.confirmIndex = 0; // 0 = NEJ (fortsätt), 1 = JA (avsluta)
+      // Highscore = en topp 5-lista PER spelläge ({classic:[...], timeattack:[...]}),
+      // sparas mellan besök i webbläsaren.
+      this.highscores = this.loadHighscores();
+      this.highscoreViewMode = 'classic'; // vilken av de två tabellerna som visas i highscore-fliken
+      this.nameChars = [];      // tecken som skrivs in vid nytt highscore
+      this.nameCursor = 0;
+      this.pendingHighscoreRound = 0;
+      this.kubbs = [];
+      this.batons = 8;
+      this.phase = 'kubbs'; // kubbs | king
+      this.message = '';
+      this.msgTimer = 0;
+      this.shake = 0;
+      this.flash = 0;
+
+      this.aimT = 0; this.powerT = 0;
+      this.aimX = 80; this.powerVal = 0;
+      this.lockedX = 80; this.lockedPower = 0;
+      this.aimSpeed = 2.6; this.powerSpeed = 3.6;
+
+      this.throwAnim = null;
+      this.overAnim = null; // {t, rot, phase} - "överkraft"-sekvensen (anime-cutscene)
+      this.fallenPieces = []; // {x,y,type:'kubb'|'king'}
+
+      this.msgClock = 0;
+      this.last = performance.now();
+
+      this.bindInput();
+      // Binder loopen en gång istället för att skapa en ny bunden funktion
+      // varje frame - undviker onödig allokering i den heta renderingsloopen.
+      this.loop = this.loop.bind(this);
+
+      this.drawMenu(0);
+      requestAnimationFrame(this.loop);
+    }
+
+    cycleMode(){
+      this.menuIndex = (this.menuIndex+1) % MODES.length;
+      this.audio.sfxLock();
+    }
+
+    // ---- rundor & svårighetsgrad ----
+    idealTol(){
+      return this.phase === 'kubbs'
+        ? {ideal:60, tol:Math.max(10, 17-(this.round-1))}
+        : {ideal:88, tol:Math.max(4, 8-(this.round-1)*0.5)};
+    }
+    newRound(){
+      this.kubbs = KUBB_XS.map(x=>({x, standing:true}));
+      this.batons = 8;
+      this.phase = 'kubbs';
+      this.fallenPieces = [];
+      // Sikte och kraftmätare accelererar för varje runda för en tydligare
+      // svårighetskurva.
+      this.aimSpeed = 2.6 + (this.round-1)*0.2;
+      this.powerSpeed = 3.6 + (this.round-1)*0.3;
+      this.state = 'aim'; this.aimT = 0;
+    }
+    startGame(){
+      this.audio.ensure();
+      this.round = 1;
+      if(this.gameMode === 'timeattack') this.timeLeft = TIME_ATTACK_START;
+      this.newRound();
+    }
+    kubbsStanding(){ return this.kubbs.filter(k=>k.standing).length; }
+
+    // ---- highscore (topp 5 per spelläge) ----
+    loadHighscores(){
+      const empty = { classic: [], timeattack: [] };
+      try{
+        const raw = JSON.parse(localStorage.getItem(HIGHSCORE_KEY) || 'null');
+        if(raw && typeof raw === 'object' && !Array.isArray(raw)){
+          ['classic','timeattack'].forEach(id=>{
+            const list = raw[id];
+            empty[id] = Array.isArray(list)
+              ? list.filter(e => e && typeof e.round === 'number' && typeof e.name === 'string').slice(0, MAX_HIGHSCORES)
+              : [];
+          });
+        }
+      }catch(e){}
+      return empty;
+    }
+    saveHighscores(){
+      try{ localStorage.setItem(HIGHSCORE_KEY, JSON.stringify(this.highscores)); }catch(e){}
+    }
+    qualifiesForHighscore(round, mode){
+      const list = this.highscores[mode] || [];
+      if(round <= 0) return false;
+      if(list.length < MAX_HIGHSCORES) return true;
+      return round > list[list.length-1].round;
+    }
+    // Kallas när en omgång tar slut - avgör om spelaren ska få skriva in
+    // sitt namn (nytt highscore) eller gå direkt till GAME OVER-skärmen.
+    endGame(){
+      this.throwAnim = null;
+      this.overAnim = null;
+      if(this.qualifiesForHighscore(this.round, this.gameMode)){
+        this.pendingHighscoreRound = this.round;
+        this.nameChars = new Array(NAME_LEN).fill('A');
+        this.nameCursor = 0;
+        this.state = 'nameentry';
+      } else {
+        this.state = 'gameover';
+      }
+    }
+    nameEntryChangeLetter(dir){
+      const set = NAME_CHARSET;
+      let idx = set.indexOf(this.nameChars[this.nameCursor]);
+      if(idx < 0) idx = 0;
+      idx = (idx + dir + set.length) % set.length;
+      this.nameChars[this.nameCursor] = set[idx];
+      this.audio.sfxLock();
+    }
+    nameEntryMoveCursor(dir){
+      this.nameCursor = Math.max(0, Math.min(this.nameChars.length-1, this.nameCursor+dir));
+      this.audio.sfxLock();
+    }
+    submitName(){
+      let name = this.nameChars.join('').trim();
+      if(!name) name = 'SPELARE';
+      const list = this.highscores[this.gameMode] || (this.highscores[this.gameMode] = []);
+      list.push({ name, round:this.pendingHighscoreRound });
+      list.sort((a,b)=>b.round-a.round);
+      this.highscores[this.gameMode] = list.slice(0, MAX_HIGHSCORES);
+      this.saveHighscores();
+      this.highscoreViewMode = this.gameMode;
+      this.audio.sfxWin();
+      this.state = 'gameover';
+    }
+    toggleHighscoreView(){
+      this.highscoreViewMode = this.highscoreViewMode === 'classic' ? 'timeattack' : 'classic';
+      this.audio.sfxLock();
+    }
+
+    // ---- MENY-knapp: bekräfta att man vill överge pågående runda ----
+    requestQuitConfirm(){
+      const quittableStates = ['aim','power','throw','overpower','roundclear'];
+      if(!quittableStates.includes(this.state)) return;
+      this.previousState = this.state;
+      this.confirmIndex = 0; // förvalt NEJ - man ska aktivt behöva välja JA
+      this.state = 'confirmQuit';
+      this.audio.sfxLock();
+    }
+    toggleConfirmChoice(){
+      this.confirmIndex = this.confirmIndex === 0 ? 1 : 0;
+      this.audio.sfxLock();
+    }
+    resolveConfirm(){
+      if(this.confirmIndex === 1){
+        // JA - överge rundan och gå till huvudmenyn.
+        this.throwAnim = null;
+        this.overAnim = null;
+        this.audio.sfxOver();
+        this.state = 'menu';
+      } else {
+        // NEJ - fortsätt exakt där man var.
+        this.state = this.previousState;
+        this.audio.sfxLock();
+      }
+      this.previousState = null;
+    }
+
+    // ---- input ----
+    actionPress(){
+      this.audio.ensure();
+      if(this.state === 'confirmQuit'){ this.resolveConfirm(); return; }
+      if(this.state === 'overpower'){ this.attemptEarthCatch(); return; }
+      if(this.state === 'menu'){
+        const chosen = MODES[this.menuIndex];
+        if(chosen.id === 'highscores'){
+          this.audio.sfxLock();
+          this.state = 'highscoreList';
+          return;
+        }
+        this.gameMode = chosen.id;
+        this.startGame();
+        return;
+      }
+      if(this.state === 'highscoreList'){ this.state = 'menu'; return; }
+      if(this.state === 'nameentry'){ this.nameEntryChangeLetter(1); return; }
+      if(this.state === 'gameover'){ this.state = 'menu'; return; }
+      if(this.state === 'roundclear'){
+        if(this.gameMode === 'timeattack') this.timeLeft += TIME_BONUS_PER_ROUND;
+        this.round++; this.newRound();
+        return;
+      }
+      if(this.state === 'aim'){
+        this.lockedX = this.aimX;
+        this.audio.sfxLock();
+        this.state = 'power'; this.powerT = 0;
+        return;
+      }
+      if(this.state === 'power'){
+        this.lockedPower = this.powerVal;
+        this.audio.sfxLock();
+        const {ideal, tol} = this.idealTol();
+        if(this.lockedPower > ideal + tol){
+          // Överkraft: kraftmätaren landade till höger om träffytan.
+          // Pausa det ordinarie spelet och kör specialsekvensen istället för ett vanligt kast.
+          // Slumpa vilken av de tre pinsamma miss-sekvenserna som spelas upp:
+          // man träffar sitt eget ben, kastet skjuter iväg och träffar en
+          // förbipasserande fiskmås, eller pinnen far ett helt varv runt jorden
+          // och kommer tillbaka bakifrån.
+          const overVariantRoll = Math.random();
+          const overVariant = overVariantRoll < 1/3 ? 'bird' : (overVariantRoll < 2/3 ? 'earth' : 'leg');
+          this.overAnim = {t:0, rot:0, phase:'closeup', variant: overVariant};
+          this.state = 'overpower';
+          return;
+        }
+        this.launchThrow();
+        return;
+      }
+    }
+
+    updateOverpower(dt){
+      const a = this.overAnim;
+      a.t += dt; a.rot += dt*42;
+      if(a.variant === 'earth'){ this.updateOverpowerEarth(a, dt); return; }
+      if(a.phase === 'closeup' && a.t >= OVER_CLOSEUP_DUR){
+        a.phase = 'impact'; a.t = 0;
+        this.audio.sfxHit(); this.shake = 9;
+      } else if(a.phase === 'impact' && a.t >= OVER_IMPACT_DUR){
+        a.phase = 'react'; a.t = 0;
+        this.audio.beep(240,0.35,'sawtooth');
+      } else if(a.phase === 'react' && a.t >= OVER_REACT_DUR){
+        this.finishOverpower();
+      }
+    }
+    // "Jorden runt"-varianten har egna, längre faser: closeup (delad med de
+    // andra) -> launch (pinnen skjuts upp i skyn) -> orbit (det tydliga varvet
+    // runt jorden) -> catch (spelarens tajmingsfönster) -> antingen caught
+    // (lyckad fångst, extra kast) eller missed (pinnen susar förbi bakifrån,
+    // precis som de andra miss-sekvenserna).
+    updateOverpowerEarth(a, dt){
+      if(a.phase === 'closeup' && a.t >= OVER_CLOSEUP_DUR){
+        a.phase = 'launch'; a.t = 0;
+        this.audio.sfxThrow();
+      } else if(a.phase === 'launch' && a.t >= OVER_EARTH_LAUNCH_DUR){
+        a.phase = 'orbit'; a.t = 0;
+      } else if(a.phase === 'orbit' && a.t >= OVER_EARTH_ORBIT_DUR){
+        a.phase = 'catch'; a.t = 0; a.resolved = false; a.caught = false;
+        this.audio.beep(520,0.12,'square');
+      } else if(a.phase === 'catch' && !a.resolved && a.t >= OVER_EARTH_CATCH_DUR){
+        // Spelaren hann inte trycka i tid - pinnen susar förbi.
+        a.resolved = true; a.caught = false;
+        a.phase = 'missed'; a.t = 0;
+        this.audio.sfxHit(); this.shake = 9;
+      } else if(a.phase === 'caught' && a.t >= OVER_EARTH_CAUGHT_DUR){
+        this.finishOverpowerEarthCatch();
+      } else if(a.phase === 'missed' && a.t >= OVER_REACT_DUR){
+        this.finishOverpower();
+      }
+    }
+    // Anropas från actionPress() när spelaren trycker A under catch-fasen.
+    attemptEarthCatch(){
+      const a = this.overAnim;
+      if(!a || a.variant !== 'earth' || a.phase !== 'catch' || a.resolved) return;
+      const p = Math.min(1, a.t / OVER_EARTH_CATCH_DUR);
+      a.resolved = true;
+      if(Math.abs(p - OVER_EARTH_CATCH_CENTER) <= OVER_EARTH_CATCH_TOL){
+        a.caught = true;
+        a.phase = 'caught'; a.t = 0;
+        this.audio.sfxWin();
+        this.flash = 0.5;
+      } else {
+        a.caught = false;
+        a.phase = 'missed'; a.t = 0;
+        this.audio.sfxHit(); this.shake = 9;
+      }
+    }
+    finishOverpowerEarthCatch(){
+      this.overAnim = null;
+      // Fångad i rätt ögonblick - inget kast går förlorat, och spelaren
+      // belönas dessutom med ett extra kast.
+      this.batons++;
+      this.message = 'FÅNGAD! EXTRA KAST!';
+      this.msgTimer = 1.4;
+      this.state = 'aim';
+      this.aimT = Math.random()*10;
+    }
+    finishOverpower(){
+      const variant = this.overAnim ? this.overAnim.variant : 'leg';
+      this.overAnim = null;
+      // Animationen är färdigspelad - räknas som ett missat kast, nästa kast
+      // påbörjas automatiskt.
+      if(this.phase === 'king'){
+        this.message = variant === 'bird' ? 'ÖVERKRAFT – FISKMÅSEN I VÄGEN!'
+          : variant === 'earth' ? 'ÖVERKRAFT – PINNEN FÖRSVANN JORDEN RUNT!'
+          : 'ÖVERKRAFT – KUNGEN UTOM RÄCKHÅLL!';
+        this.msgTimer = 1.3;
+        this.audio.sfxOver();
+        this.endGame();
+        return;
+      }
+      this.message = variant === 'bird' ? 'ÖVERKRAFT – TRÄFFADE EN FISKMÅS!'
+        : variant === 'earth' ? 'ÖVERKRAFT – ETT VARV RUNT JORDEN!'
+        : 'ÖVERKRAFT – MISS!';
+      this.msgTimer = 1.0;
+      this.batons--;
+      if(this.batons <= 0){
+        this.audio.sfxOver();
+        this.endGame();
+        return;
+      }
+      this.state = 'aim';
+      this.aimT = Math.random()*10;
+    }
+
+    launchThrow(){
+      this.audio.sfxThrow();
+      const jitter = (Math.random()-0.5)*6;
+      const {ideal, tol} = this.idealTol();
+      let err = 0;
+      if(this.lockedPower < ideal - tol) err = -(ideal - tol - this.lockedPower);
+      else if(this.lockedPower > ideal + tol) err = (this.lockedPower - (ideal+tol));
+      const landingX = Math.max(8, Math.min(152, this.lockedX + jitter + err*0.9));
+      const landingY = Math.max(8, Math.min(136, 136 - this.lockedPower*1.5));
+
+      this.throwAnim = { t:0, dur:0.55, x0:80, y0:BASE_Y, x1:landingX, y1:landingY, rot:0 };
+      this.state = 'throw';
+    }
+
+    resolveThrow(){
+      const {x1,y1} = this.throwAnim;
+      let hit = false;
+      if(this.phase === 'kubbs' && y1 > 26 && y1 < 58){
+        let best = null, bestD = 999;
+        this.kubbs.forEach(k=>{
+          if(!k.standing) return;
+          const d = Math.abs(k.x - x1);
+          if(d < bestD){ bestD = d; best = k; }
+        });
+        if(best && bestD < 9){
+          best.standing = false;
+          this.fallenPieces.push({x:best.x, y:KUBB_Y, type:'kubb'});
+          hit = true;
+          this.audio.sfxHit(); this.shake = 6;
+          this.message = 'TRÄFF!'; this.msgTimer = 1.0;
+        }
+      } else if(this.phase === 'king' && y1 < 32 && Math.abs(x1-KING_X) < 9){
+        hit = true;
+        this.audio.sfxWin(); this.flash = 0.6;
+        this.fallenPieces.push({x:KING_X, y:KING_Y, type:'king'});
+        this.message = 'KUNGEN FÖLL!'; this.msgTimer = 1.4;
+      }
+
+      // Kungen står mellan spelaren och klossarna. Kastar man för kort (når
+      // inte fram till klossarnas yta) OCH kastet ligger i linje med Kungen,
+      // är det Game Over direkt.
+      if(!hit && this.phase === 'kubbs' && y1 >= KUBB_Y+18 && Math.abs(x1-KING_X) < KING_HIT_TOL){
+        this.audio.sfxOver();
+        this.message = 'DU TRÄFFADE KUNGEN – GAME OVER!';
+        this.msgTimer = 1.6;
+        this.endGame();
+        return;
+      }
+
+      if(!hit){
+        this.audio.sfxMiss();
+        this.message = 'MISS';
+        this.msgTimer = 0.8;
+      }
+      this.batons--;
+
+      // Om detta kast fällde sista klossen: byt fas till kungen, men avgör
+      // inte rundan här - spelaren får ett separat försök på kungen.
+      if(this.phase === 'kubbs' && this.kubbsStanding() === 0){
+        this.phase = 'king';
+        this.message = 'SIKTA PÅ KUNGEN!';
+        this.msgTimer = 1.3;
+        this.throwAnim = null;
+        this.state = 'aim';
+        this.aimT = Math.random()*10;
+        return;
+      }
+
+      if(this.phase === 'king'){
+        if(hit){
+          this.state = 'roundclear';
+          this.throwAnim = null;
+        } else {
+          this.audio.sfxOver();
+          this.endGame();
+        }
+        return;
+      }
+
+      if(this.batons <= 0){
+        this.audio.sfxOver();
+        this.endGame();
+        return;
+      }
+
+      this.state = 'aim';
+      this.aimT = Math.random()*10;
+      this.throwAnim = null;
+    }
+
+    // ---- input-bindningar ----
+    bindInput(){
+      window.addEventListener('keydown', (e)=>{
+        if(this.state === 'nameentry'){
+          if(e.code === 'ArrowUp'){ e.preventDefault(); this.nameEntryChangeLetter(1); return; }
+          if(e.code === 'ArrowDown'){ e.preventDefault(); this.nameEntryChangeLetter(-1); return; }
+          if(e.code === 'ArrowLeft'){ e.preventDefault(); this.nameEntryMoveCursor(-1); return; }
+          if(e.code === 'ArrowRight'){ e.preventDefault(); this.nameEntryMoveCursor(1); return; }
+          if(e.code === 'Enter'){ e.preventDefault(); this.submitName(); return; }
+          if(e.code === 'Space'){ e.preventDefault(); this.nameEntryChangeLetter(1); return; }
+          return;
+        }
+        if(this.state === 'confirmQuit'){
+          if(e.code === 'ArrowLeft' || e.code === 'ArrowRight'){ e.preventDefault(); this.toggleConfirmChoice(); return; }
+          if(e.code === 'Space' || e.code === 'Enter'){ e.preventDefault(); this.resolveConfirm(); return; }
+          if(e.code === 'Escape'){ e.preventDefault(); this.confirmIndex = 0; this.resolveConfirm(); return; }
+          return;
+        }
+        if(e.code === 'Space' || e.code === 'Enter'){ e.preventDefault(); this.actionPress(); }
+        if(e.key === 'b' || e.key === 'B'){ this.audio.toggleSound(); }
+        if(e.code === 'Escape'){ e.preventDefault(); this.requestQuitConfirm(); }
+        if(this.state === 'menu' && (e.code==='ArrowUp'||e.code==='ArrowDown'||e.code==='ArrowLeft'||e.code==='ArrowRight')){
+          e.preventDefault();
+          this.cycleMode();
+        }
+        if(this.state === 'highscoreList' && (e.code==='ArrowLeft'||e.code==='ArrowRight')){
+          e.preventDefault();
+          this.toggleHighscoreView();
+        }
+      });
+      document.getElementById('btnA').addEventListener('click', ()=>this.actionPress());
+      document.getElementById('btnStart').addEventListener('click', ()=>{
+        if(this.state === 'nameentry'){ this.submitName(); return; }
+        this.actionPress();
+      });
+      document.getElementById('btnB').addEventListener('click', ()=>this.audio.toggleSound());
+      document.getElementById('btnMenu').addEventListener('click', ()=>this.requestQuitConfirm());
+      document.getElementById('btnSelect').addEventListener('click', ()=>{
+        if(this.state === 'menu'){ this.cycleMode(); }
+        else if(this.state === 'gameover'){ this.state = 'menu'; }
+        else if(this.state === 'highscoreList'){ this.toggleHighscoreView(); }
+        else if(this.state === 'nameentry'){ this.nameEntryMoveCursor(-1); }
+        else if(this.state === 'confirmQuit'){ this.toggleConfirmChoice(); }
+      });
+      const dpad = document.querySelector('.dpad');
+      if(dpad) dpad.addEventListener('click', ()=>{
+        if(this.state === 'menu'){ this.cycleMode(); }
+        else if(this.state === 'nameentry'){ this.nameEntryMoveCursor(1); }
+        else if(this.state === 'highscoreList'){ this.toggleHighscoreView(); }
+        else if(this.state === 'confirmQuit'){ this.toggleConfirmChoice(); }
+      });
+    }
+
+    // ---- ritverktyg ----
+    rect(x,y,w,h,c){ this.ctx.fillStyle=c; this.ctx.fillRect(Math.round(x),Math.round(y),Math.round(w),Math.round(h)); }
+    centerText(text,y,color,size){
+      const ctx = this.ctx;
+      ctx.fillStyle=color;
+      ctx.font=(size||8)+"px monospace";
+      ctx.textAlign='center';
+      ctx.fillText(text, W/2, y);
+    }
+
+    drawField(){
+      this.rect(0,0,W,H, PAL.lightest);
+      for(let i=0;i<H;i+=8) this.rect(0,i,W,4, PAL.light);
+      const ctx = this.ctx;
+      ctx.strokeStyle = PAL.darkest;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(6.5,6.5,W-13,H-13);
+      for(let x=6;x<W-6;x+=6) this.rect(x, BASE_Y+6, 3, 1, PAL.darkest);
+    }
+    drawKubb(x,y,standing){
+      if(standing){
+        this.rect(x-4, y-7, 8, 14, PAL.darkest);
+        this.rect(x-3, y-6, 6, 12, PAL.dark);
+        this.rect(x-3, y-3, 6, 1, PAL.darkest);
+        this.rect(x-3, y+1, 6, 1, PAL.darkest);
+      } else {
+        this.rect(x-7, y+2, 14, 6, PAL.darkest);
+        this.rect(x-6, y+3, 12, 4, PAL.dark);
+      }
+    }
+    drawKing(x,y,fallen){
+      if(!fallen){
+        this.rect(x-5, y-11, 10, 22, PAL.darkest);
+        this.rect(x-4, y-10, 8, 20, PAL.dark);
+        this.rect(x-6, y-15, 12, 4, PAL.darkest);
+        this.rect(x-6, y-18, 2, 4, PAL.darkest);
+        this.rect(x-1, y-19, 2, 5, PAL.darkest);
+        this.rect(x+4, y-18, 2, 4, PAL.darkest);
+        this.rect(x-4, y-3, 8, 1, PAL.darkest);
+      } else {
+        this.rect(x-11, y+3, 22, 7, PAL.darkest);
+        this.rect(x-10, y+4, 20, 5, PAL.dark);
+      }
+    }
+    drawBaton(x,y,rot,scale){
+      scale = scale || 1;
+      const ctx = this.ctx;
+      ctx.save();
+      ctx.translate(Math.round(x), Math.round(y));
+      ctx.rotate(rot);
+      ctx.scale(scale, scale);
+      this.rect(-1,-6,2,12, PAL.darkest);
+      this.rect(0,-6,1,12, PAL.dark);
+      ctx.restore();
+    }
+    drawThrower(){
+      const x=80,y=BASE_Y;
+      this.rect(x-3,y-10,6,10, PAL.darkest);
+      this.rect(x-2,y-9,4,8, PAL.dark);
+      this.rect(x-4,y-16,8,7, PAL.darkest);
+    }
+
+    drawMenu(t){
+      this.rect(0,0,W,H, PAL.lightest);
+      const ctx = this.ctx;
+      ctx.textAlign='center';
+      ctx.fillStyle = PAL.darkest;
+      ctx.font = "13px monospace";
+      ctx.fillText("WII-KUBB", W/2, 16);
+      ctx.font = "6px monospace";
+      ctx.fillText("VÄLJ SPELLÄGE", W/2, 25);
+
+      MODES.forEach((m,i)=>{
+        const y = 30 + i*25;
+        const selected = i === this.menuIndex;
+        this.rect(W/2-64, y, 128, 21, PAL.darkest);
+        this.rect(W/2-62, y+2, 124, 17, selected ? PAL.dark : PAL.lightest);
+        ctx.fillStyle = selected ? PAL.lightest : PAL.darkest;
+        ctx.font = "7px monospace";
+        ctx.fillText(m.label, W/2, y+10);
+        ctx.font = "5px monospace";
+        ctx.fillText(m.desc, W/2, y+17);
+      });
+
+      if(Math.floor(t*2)%2===0){
+        ctx.fillStyle = PAL.darkest;
+        ctx.font = "7px monospace";
+        ctx.fillText("TRYCK A = VÄLJ · ↑↓ BYT", W/2, 138);
+      }
+    }
+    drawHUD(){
+      const ctx = this.ctx;
+      ctx.textAlign='left';
+      ctx.fillStyle = PAL.darkest;
+      ctx.font = "6px monospace";
+      ctx.fillText("RUNDA "+this.round, 8, 12);
+      ctx.textAlign='right';
+      ctx.fillText("PINNAR "+Math.max(this.batons,0), W-8, 12);
+
+      let ix = 8;
+      this.kubbs.forEach(k=>{
+        ctx.fillStyle = k.standing ? PAL.darkest : PAL.light;
+        ctx.fillRect(ix, 16, 4, 8);
+        ix += 7;
+      });
+
+      if(this.gameMode === 'timeattack'){
+        const urgent = this.timeLeft <= 10;
+        if(!urgent || Math.floor(this.msgClock*4)%2===0){
+          ctx.textAlign='right';
+          ctx.fillStyle = PAL.darkest;
+          ctx.font = "6px monospace";
+          ctx.fillText("TID "+Math.ceil(this.timeLeft), W-8, 24);
+        }
+      }
+
+      if(this.phase==='king'){
+        ctx.textAlign='center';
+        ctx.fillStyle = PAL.darkest;
+        ctx.font="6px monospace";
+        ctx.fillText("SIKTA PÅ KUNGEN", W/2, 12);
+      }
+    }
+    isKingThrowNow(){
+      return this.phase === 'king' && (this.state === 'aim' || this.state === 'power' || this.state === 'throw');
+    }
+    drawScene(){
+      if(this.isKingThrowNow()) this.drawSceneFrontal(); else this.drawSceneTopDown();
+    }
+    drawSceneTopDown(){
+      this.drawField();
+      this.kubbs.forEach(k=>{ if(k.standing) this.drawKubb(k.x, KUBB_Y, true); });
+      this.fallenPieces.forEach(p=>{
+        if(p.type==='kubb') this.drawKubb(p.x,p.y,false);
+        else this.drawKing(p.x,p.y,true);
+      });
+      const kingFallen = this.fallenPieces.some(p=>p.type==='king');
+      if(!kingFallen) this.drawKing(KING_X, KING_Y, false);
+      this.drawThrower();
+    }
+    drawSceneFrontal(){
+      const ctx = this.ctx;
+      this.rect(0,0,W,HORIZON_Y, PAL.lightest);
+      this.rect(0,HORIZON_Y,W,H-HORIZON_Y, PAL.light);
+      this.rect(0,HORIZON_Y-1,W,1, PAL.darkest);
+
+      const vpX = W/2;
+      ctx.strokeStyle = PAL.dark;
+      ctx.lineWidth = 1;
+      for(let i=-3;i<=3;i++){
+        if(i===0) continue;
+        ctx.beginPath();
+        ctx.moveTo(vpX + i*5, HORIZON_Y);
+        ctx.lineTo(vpX + i*34, H);
+        ctx.stroke();
+      }
+      this.rect(0, HORIZON_Y+12, W, 1, PAL.dark);
+      this.rect(0, HORIZON_Y+30, W, 1, PAL.dark);
+
+      const kingFallen = this.fallenPieces.some(p=>p.type==='king');
+      if(!kingFallen) this.drawKingFront(vpX, HORIZON_Y);
+      else this.drawKing(vpX, HORIZON_Y, true);
+
+      this.rect(4, H-32, 22, 36, PAL.darkest);
+      this.rect(7, H-30, 16, 32, PAL.dark);
+      this.rect(W-26, H-32, 22, 36, PAL.darkest);
+      this.rect(W-23, H-30, 16, 32, PAL.dark);
+    }
+    drawKingFront(x,y){
+      this.rect(x-8, y-30, 16, 30, PAL.darkest);
+      this.rect(x-7, y-29, 14, 28, PAL.dark);
+      this.rect(x-3, y-16, 6, 2, PAL.darkest);
+      this.rect(x-9, y-36, 18, 5, PAL.darkest);
+      this.rect(x-9, y-40, 3, 5, PAL.darkest);
+      this.rect(x-2, y-42, 4, 7, PAL.darkest);
+      this.rect(x+6, y-40, 3, 5, PAL.darkest);
+    }
+    drawAim(){
+      this.drawScene();
+      this.drawHUD();
+      const ctx = this.ctx;
+      if(this.isKingThrowNow()){
+        const y = HORIZON_Y;
+        ctx.strokeStyle = PAL.darkest;
+        ctx.beginPath();
+        ctx.arc(this.aimX, y, 5, 0, Math.PI*2);
+        ctx.moveTo(this.aimX-9, y); ctx.lineTo(this.aimX-3, y);
+        ctx.moveTo(this.aimX+3, y); ctx.lineTo(this.aimX+9, y);
+        ctx.moveTo(this.aimX, y-9); ctx.lineTo(this.aimX, y-3);
+        ctx.moveTo(this.aimX, y+3); ctx.lineTo(this.aimX, y+9);
+        ctx.stroke();
+      } else {
+        const y = KUBB_Y;
+        ctx.fillStyle = PAL.darkest;
+        ctx.beginPath();
+        ctx.moveTo(this.aimX, y-16); ctx.lineTo(this.aimX-3,y-20); ctx.lineTo(this.aimX+3,y-20);
+        ctx.closePath(); ctx.fill();
+        ctx.strokeStyle = PAL.darkest;
+        ctx.beginPath(); ctx.moveTo(this.aimX, y-16); ctx.lineTo(this.aimX, BASE_Y-2); ctx.stroke();
+      }
+      this.centerText("SIKTA", 138, PAL.darkest, 7);
+    }
+    drawPower(){
+      this.drawScene();
+      this.drawHUD();
+      const bx = 20, by = 118, bw = 120, bh = 8;
+      this.rect(bx-1,by-1,bw+2,bh+2, PAL.darkest);
+      this.rect(bx,by,bw,bh, PAL.lightest);
+      const {ideal, tol} = this.idealTol();
+      const zoneX = bx + (ideal-tol)/100*bw;
+      const zoneW = (tol*2)/100*bw;
+      this.rect(zoneX, by, zoneW, bh, PAL.dark);
+      // "Överkraft"-zonen till höger om träffytan - för hårt kast utlöser specialsekvensen
+      const overZoneX = zoneX + zoneW;
+      if(overZoneX < bx+bw){
+        for(let sx = overZoneX; sx < bx+bw; sx += 3) this.rect(sx, by, 1.5, bh, PAL.darkest);
+      }
+      const px_ = bx + (this.powerVal/100)*bw;
+      this.rect(px_-1, by-3, 2, bh+6, PAL.darkest);
+      this.centerText("KRAFT", 138, PAL.darkest, 7);
+    }
+    drawThrowAnim(){
+      this.drawScene();
+      this.drawHUD();
+      const a = this.throwAnim;
+      const tt = Math.min(1, a.t/a.dur);
+      const x = a.x0 + (a.x1-a.x0)*tt;
+      const yLinear = a.y0 + (a.y1-a.y0)*tt;
+      const arc = Math.sin(Math.PI*tt) * 14;
+      const y = yLinear - arc;
+      this.ctx.globalAlpha = 0.5;
+      this.rect(x-3, yLinear+1, 6,2, PAL.darkest);
+      this.ctx.globalAlpha = 1;
+      // i frontalvyn krymper pinnen ju längre bort (mot kungen) den flyger
+      const scale = this.isKingThrowNow() ? (1 - tt*0.6) : 1;
+      this.drawBaton(x,y, a.rot, scale);
+    }
+
+    // ---- Överkraft: anime-stil specialsekvens vid för hårt kast ----
+    drawOverpower(){
+      const a = this.overAnim;
+      const ctx = this.ctx;
+      this.rect(0,0,W,H, '#141414');
+
+      if(a.phase === 'closeup'){
+        ctx.save();
+        ctx.translate(W/2, H/2 - 6);
+        ctx.strokeStyle = '#f4f4f4';
+        ctx.lineWidth = 1;
+        for(let i=0;i<12;i++){
+          const ang = (i/12)*Math.PI*2 + a.t*3;
+          ctx.globalAlpha = 0.55;
+          ctx.beginPath();
+          ctx.moveTo(Math.cos(ang)*18, Math.sin(ang)*18);
+          ctx.lineTo(Math.cos(ang)*68, Math.sin(ang)*68);
+          ctx.stroke();
+        }
+        ctx.globalAlpha = 1;
+        ctx.rotate(a.rot);
+        ctx.scale(2.4,2.4);
+        this.rect(-1,-8,2,16, PAL.lightest);
+        this.rect(0,-8,1,16, PAL.light);
+        ctx.restore();
+        this.centerText("SNURR!!", 22, PAL.lightest, 9);
+        this.centerText("FÖR HÅRT KAST...", 130, '#f4f4f4', 6);
+      } else if(a.phase === 'impact'){
+        if(a.variant === 'bird'){
+          // Kastaren skjuter iväg pinnen rakt upp i skyn...
+          this.drawStickFigure(W/2, H-22, false, false);
+          const bx = W/2 + 22, by = 38;
+          this.drawSeagull(bx, by, false);
+          // ...och pinnen smäller rätt in i en förbipasserande fiskmås.
+          ctx.save();
+          ctx.translate(bx-9, by-2);
+          ctx.rotate(0.5);
+          this.rect(-1,-8,2,16, PAL.lightest);
+          this.rect(0,-8,1,16, PAL.light);
+          ctx.restore();
+          ctx.save();
+          ctx.translate(bx, by);
+          ctx.fillStyle = '#f4f4f4';
+          this.drawStar(0,0,10,4,6);
+          ctx.restore();
+          // lösa fjädrar som fläks ut vid smällen
+          for(let i=0;i<5;i++){
+            const ang = (i/5)*Math.PI*2 + a.t*4;
+            const r = 10 + a.t*30;
+            this.rect(bx+Math.cos(ang)*r-1, by+Math.sin(ang)*r-1, 2,3, '#e4e4e4');
+          }
+          if(Math.floor(a.t*20)%2===0) this.rect(0,0,W,H,'rgba(244,244,244,0.4)');
+          this.centerText("PAFF!", 30, '#f4f4f4', 12);
+        } else {
+          this.drawStickFigure(W/2, H-22, true, false);
+          ctx.save();
+          ctx.translate(W/2+10, H-32);
+          ctx.fillStyle = '#f4f4f4';
+          this.drawStar(0,0,9,4,6);
+          ctx.restore();
+          if(Math.floor(a.t*20)%2===0) this.rect(0,0,W,H,'rgba(244,244,244,0.4)');
+          this.centerText("PAFF!", 30, '#f4f4f4', 12);
+        }
+      } else if(a.phase === 'react'){
+        if(a.variant === 'bird'){
+          this.drawStickFigure(W/2, H-22, false, false);
+          // Fiskmåsen daskar snurrigt nedåt med stjärnor kring huvudet.
+          const fallY = 46 + a.t*36;
+          this.drawSeagull(W/2 + 22, fallY, true);
+          ctx.save();
+          ctx.translate(W/2+22, fallY-14);
+          for(let i=0;i<3;i++){
+            const ang = a.t*6 + i*(Math.PI*2/3);
+            ctx.save();
+            ctx.translate(Math.cos(ang)*10, Math.sin(ang)*10*0.5);
+            ctx.fillStyle = '#f4f4f4';
+            this.drawStar(0,0,3,1.5,5);
+            ctx.restore();
+          }
+          ctx.restore();
+          // fjädrar som singlar ner mot marken
+          for(let i=0;i<4;i++){
+            const drip = (a.t*40 + i*17) % 60;
+            this.rect(W/2+6+i*8, 24+drip, 2,3, i%2===0 ? '#f4f4f4' : '#c9c9c9');
+          }
+          this.centerText("SKRIIIK!!", 20, '#f4f4f4', 9);
+          this.centerText("...", 132, '#8a8a8a', 8);
+        } else {
+          this.drawStickFigure(W/2, H-22, true, true);
+          this.centerText("AJJ!!", 24, '#f4f4f4', 12);
+          this.centerText("...", 132, '#8a8a8a', 8);
+        }
+      } else if(a.phase === 'launch'){
+        // Jorden-runt: pinnen skjuts rakt upp i skyn och försvinner ur bild.
+        this.drawStickFigure(W/2, H-22, false, false);
+        const tt = Math.min(1, a.t/OVER_EARTH_LAUNCH_DUR);
+        const bx = W/2 + 6, by = (H-40) - tt*(H-10);
+        ctx.save();
+        ctx.globalAlpha = 0.45;
+        this.rect(bx-2, by+3, 4, 24*tt+6, '#f4f4f4');
+        ctx.globalAlpha = 1;
+        ctx.restore();
+        ctx.save();
+        ctx.translate(bx, by);
+        ctx.rotate(a.rot);
+        this.rect(-1,-7,2,14, PAL.lightest);
+        this.rect(0,-7,1,14, PAL.light);
+        ctx.restore();
+        this.centerText("DEN FLYGER IVÄG...", 130, '#f4f4f4', 6);
+      } else if(a.phase === 'orbit'){
+        // Tydligt, långsammare varv runt jordklotet - stjärnhimmel i bakgrunden
+        // så det inte råder något tvivel om vad som pågår.
+        for(let i=0;i<18;i++){
+          const sx = (i*41)%W, sy = (i*29)%74+6;
+          this.rect(sx, sy, 1, 1, i%3===0 ? '#f4f4f4' : '#8a8a8a');
+        }
+        const ex = W/2, ey = 54, er = 22;
+        const tt = Math.min(1, a.t/OVER_EARTH_ORBIT_DUR);
+        const sweep = tt*Math.PI*2;
+        ctx.save();
+        ctx.translate(ex, ey);
+        ctx.strokeStyle = '#f4f4f4';
+        ctx.lineWidth = 1;
+        ctx.globalAlpha = 0.5;
+        ctx.setLineDash([2,2]);
+        ctx.beginPath();
+        ctx.ellipse(0,0, er+11, er+6, 0, -Math.PI/2, -Math.PI/2+sweep);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 1;
+        ctx.restore();
+        this.drawEarth(ex, ey, er);
+        const bang = -Math.PI/2 + sweep;
+        const bx = ex + Math.cos(bang)*(er+11), by = ey + Math.sin(bang)*(er+6);
+        ctx.save();
+        ctx.translate(bx, by);
+        ctx.rotate(a.rot);
+        this.rect(-1,-7,2,14, PAL.lightest);
+        this.rect(0,-7,1,14, PAL.light);
+        ctx.restore();
+        this.centerText(tt < 0.85 ? "ETT VARV RUNT JORDEN..." : "DEN ÄR SNART TILLBAKA!", 128, '#f4f4f4', 6);
+      } else if(a.phase === 'catch'){
+        // Spelarens tajmingsfönster: pinnen kommer inflygande ovanifrån,
+        // synkad med den rörliga markören i balken nedanför.
+        this.drawStickFigure(W/2, H-22, false, false);
+        const p = Math.min(1, a.t/OVER_EARTH_CATCH_DUR);
+        const bY = 14 + p*(H-54);
+        ctx.save();
+        ctx.translate(W/2+4, bY);
+        ctx.rotate(a.rot);
+        this.rect(-1,-7,2,14, PAL.lightest);
+        this.rect(0,-7,1,14, PAL.light);
+        ctx.restore();
+
+        const bx_ = 20, barY = 112, barW = 120, barH = 8;
+        this.rect(bx_-1, barY-1, barW+2, barH+2, PAL.darkest);
+        this.rect(bx_, barY, barW, barH, '#f4f4f4');
+        const zoneW = (OVER_EARTH_CATCH_TOL*2) * barW;
+        const zoneX = bx_ + (OVER_EARTH_CATCH_CENTER - OVER_EARTH_CATCH_TOL)*barW;
+        this.rect(zoneX, barY, zoneW, barH, PAL.dark);
+        const markerX = bx_ + p*barW;
+        this.rect(markerX-1, barY-3, 2, barH+6, PAL.darkest);
+
+        this.centerText("DEN ÄR TILLBAKA!!", 14, '#f4f4f4', 7);
+        if(Math.floor(a.t*6)%2===0) this.centerText("TRYCK A – FÅNGA DEN!", 138, '#f4f4f4', 6);
+      } else if(a.phase === 'caught'){
+        // Lyckad fångst - segerpose med sparkel och glädjebesked.
+        ctx.save();
+        ctx.translate(W/2, H-22);
+        this.rect(-6,-16,4,16, PAL.darkest);
+        this.rect(2,-16,4,16, PAL.darkest);
+        this.rect(-6,-30,12,16, '#3a5fae');
+        this.rect(-6,-42,12,12, '#f4c9a0');
+        this.rect(-7,-43,14,3, PAL.darkest);
+        this.rect(-4,-38,2,2, PAL.darkest);
+        this.rect(2,-38,2,2, PAL.darkest);
+        this.rect(-2,-33,4,2, PAL.darkest);
+        ctx.save();
+        ctx.translate(8,-34);
+        ctx.rotate(-0.9);
+        this.rect(-1,-7,2,14, PAL.lightest);
+        this.rect(0,-7,1,14, PAL.light);
+        ctx.restore();
+        ctx.restore();
+        for(let i=0;i<6;i++){
+          const ang = (i/6)*Math.PI*2 + a.t*3;
+          const r = 20 + Math.sin(a.t*8+i)*3;
+          ctx.save();
+          ctx.translate(W/2+10 + Math.cos(ang)*r, (H-52) + Math.sin(ang)*r*0.6);
+          ctx.fillStyle = i%2===0 ? '#fff27a' : '#f4f4f4';
+          this.drawStar(0,0,3,1.5,5);
+          ctx.restore();
+        }
+        this.centerText("FÅNGAD!!", 22, '#fff27a', 11);
+        this.centerText("EXTRA KAST!", 130, '#f4f4f4', 7);
+      } else if(a.phase === 'missed'){
+        // Pinnen susar in bakifrån och träffar huvudet så hårt att personen
+        // tappar balansen och ramlar omkull.
+        const fallDur = OVER_REACT_DUR*0.55;
+        const fallP = Math.min(1, a.t/fallDur);
+        const angle = Math.pow(fallP, 1.6) * (Math.PI/2 - 0.08);
+        const pivotX = W/2, pivotY = H-22;
+        ctx.save();
+        ctx.translate(pivotX, pivotY);
+        ctx.rotate(angle);
+        this.drawStickFigure(0, 0, false, true);
+        ctx.restore();
+
+        // Stjärnorna snurrar kring huvudet hela vägen ner mot marken.
+        const headX = pivotX + Math.sin(angle)*36;
+        const headY = pivotY - Math.cos(angle)*36;
+        for(let i=0;i<3;i++){
+          const ang = a.t*6 + i*(Math.PI*2/3);
+          ctx.save();
+          ctx.translate(headX + Math.cos(ang)*9, headY-6 + Math.sin(ang)*4);
+          ctx.fillStyle = '#f4f4f4';
+          this.drawStar(0,0,3,1.5,5);
+          ctx.restore();
+        }
+
+        // Dammpuffar när personen väl slår i marken.
+        if(fallP >= 1){
+          const since = a.t - fallDur;
+          const puffR = 8 + Math.min(1, since*6)*10;
+          ctx.save();
+          ctx.globalAlpha = Math.max(0, 1 - since*1.5);
+          for(let i=0;i<4;i++){
+            const puffAng = -Math.PI + (i/3)*Math.PI;
+            this.rect(pivotX + Math.cos(puffAng)*puffR - 1, pivotY-2 + Math.sin(puffAng)*puffR*0.25 - 1, 2,2, '#c9c9c9');
+          }
+          ctx.globalAlpha = 1;
+          ctx.restore();
+        }
+
+        this.centerText("AJJ!!", 24, '#f4f4f4', 12);
+        this.centerText("...", 132, '#8a8a8a', 8);
+      }
+    }
+    drawEarth(x, y, r){
+      const ctx = this.ctx;
+      ctx.save();
+      ctx.translate(Math.round(x), Math.round(y));
+      ctx.beginPath();
+      ctx.arc(0,0,r,0,Math.PI*2);
+      ctx.fillStyle = '#3a6fae';
+      ctx.fill();
+      ctx.save();
+      ctx.clip();
+      ctx.fillStyle = '#4a9f5a';
+      this.rect(-r,-r*0.3, r*0.9, r*0.7, '#4a9f5a');
+      this.rect(-r*0.1, r*0.15, r*0.8, r*0.6, '#4a9f5a');
+      this.rect(r*0.3, -r*0.9, r*0.6, r*0.5, '#4a9f5a');
+      ctx.restore();
+      ctx.beginPath();
+      ctx.arc(0,0,r,0,Math.PI*2);
+      ctx.strokeStyle = '#dff0ff';
+      ctx.lineWidth = 1;
+      ctx.globalAlpha = 0.6;
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      ctx.restore();
+    }
+    drawSeagull(x, y, dizzy){
+      const ctx = this.ctx;
+      ctx.save();
+      ctx.translate(Math.round(x), Math.round(y));
+      if(dizzy) ctx.rotate(Math.PI*0.92);
+      // kropp
+      this.rect(-8,-4,16,8, '#f4f4f4');
+      // vingar
+      this.rect(-15,-6,8,4, '#c9c9c9');
+      this.rect(7,-6,8,4, '#c9c9c9');
+      // huvud
+      this.rect(6,-9,7,7, '#f4f4f4');
+      // näbb
+      this.rect(13,-6,4,2, '#f2a53f');
+      if(dizzy){
+        // yrvakna kryss-ögon
+        this.rect(8,-8,1.4,1.4, PAL.darkest);
+        this.rect(10.6,-8,1.4,1.4, PAL.darkest);
+      } else {
+        this.rect(9,-7,1.4,1.4, PAL.darkest);
+      }
+      ctx.restore();
+    }
+    drawStickFigure(x, y, hitLeg, crying){
+      const ctx = this.ctx;
+      ctx.save();
+      ctx.translate(Math.round(x), Math.round(y));
+      this.rect(-6,-16,4,16, PAL.darkest);
+      if(hitLeg){
+        ctx.save();
+        ctx.translate(4,-14);
+        ctx.rotate(0.25);
+        this.rect(-2,0,4,16, PAL.darkest);
+        ctx.restore();
+      } else {
+        this.rect(2,-16,4,16, PAL.darkest);
+      }
+      this.rect(-6,-30,12,16, '#3a5fae');
+      this.rect(-6,-42,12,12, '#f4c9a0');
+      this.rect(-7,-43,14,3, PAL.darkest);
+      if(crying){
+        this.rect(-4,-38,2,2, PAL.darkest);
+        this.rect(2,-38,2,2, PAL.darkest);
+        this.rect(-2,-33,4,3, PAL.darkest);
+        for(let i=0;i<3;i++){
+          const drip = (this.overAnim.t*50 + i*13) % 20;
+          this.rect(-5, -38+drip, 1.4, 4, '#5fb8ff');
+          this.rect(4, -38+((drip*1.4)%20), 1.4, 4, '#5fb8ff');
+        }
+      } else {
+        this.rect(-4,-38,2,2, PAL.darkest);
+        this.rect(2,-38,2,2, PAL.darkest);
+        this.rect(-2,-33,3,1, PAL.darkest);
+      }
+      ctx.restore();
+    }
+    drawStar(cx,cy,outerR,innerR,points){
+      const ctx = this.ctx;
+      ctx.beginPath();
+      for(let i=0;i<points*2;i++){
+        const r = i%2===0 ? outerR : innerR;
+        const ang = (i/(points*2))*Math.PI*2 - Math.PI/2;
+        const sx = cx + Math.cos(ang)*r, sy = cy + Math.sin(ang)*r;
+        if(i===0) ctx.moveTo(sx,sy); else ctx.lineTo(sx,sy);
+      }
+      ctx.closePath();
+      ctx.fill();
+    }
+    drawMessage(){
+      if(this.msgTimer > 0){
+        this.rect(30,60,100,20, PAL.darkest);
+        this.rect(32,62,96,16, PAL.lightest);
+        this.centerText(this.message, 72, PAL.darkest, 8);
+      }
+    }
+    drawRoundClear(){
+      this.drawScene();
+      this.rect(20,48,120,50, PAL.darkest);
+      this.rect(22,50,116,46, PAL.lightest);
+      this.centerText("RUNDA "+this.round, 64, PAL.darkest, 9);
+      this.centerText("KLARAD!", 76, PAL.darkest, 10);
+      if(this.gameMode === 'timeattack'){
+        this.centerText("+"+TIME_BONUS_PER_ROUND+" SEK", 86, PAL.dark, 6);
+      }
+      if(Math.floor(this.msgClock*2)%2===0) this.centerText("TRYCK A", 94, PAL.darkest, 7);
+    }
+    drawGameOver(){
+      const ctx = this.ctx;
+      this.rect(0,0,W,H, PAL.darkest);
+      ctx.textAlign='center';
+      ctx.fillStyle = PAL.light;
+      ctx.font = "14px monospace";
+      ctx.fillText("GAME OVER", W/2, 54);
+      ctx.font = "7px monospace";
+      ctx.fillText("DU NÅDDE RUNDA "+this.round, W/2, 72);
+      ctx.font = "6px monospace";
+      ctx.fillText(MODES.find(m=>m.id===this.gameMode).label, W/2, 86);
+      if(Math.floor(this.msgClock*2)%2===0){
+        ctx.font = "7px monospace";
+        ctx.fillText("TRYCK START = MENY", W/2, 106);
+      }
+    }
+    drawNameEntry(){
+      this.rect(0,0,W,H, PAL.lightest);
+      const ctx = this.ctx;
+      ctx.textAlign='center';
+      ctx.fillStyle = PAL.darkest;
+      ctx.font = "11px monospace";
+      ctx.fillText("NYTT HIGHSCORE!", W/2, 22);
+      ctx.font = "7px monospace";
+      ctx.fillText("RUNDA "+this.pendingHighscoreRound, W/2, 34);
+      ctx.font = "5px monospace";
+      ctx.fillText("SKRIV IN DITT NAMN", W/2, 44);
+
+      const charW = 18;
+      const totalW = this.nameChars.length*charW;
+      const startX = W/2 - totalW/2 + charW/2;
+      const y = 76;
+      this.nameChars.forEach((ch,i)=>{
+        const x = startX + i*charW;
+        const selected = i === this.nameCursor;
+        this.rect(x-8, y-12, 16, 18, PAL.darkest);
+        this.rect(x-7, y-11, 14, 16, selected ? PAL.dark : PAL.lightest);
+        ctx.fillStyle = selected ? PAL.lightest : PAL.darkest;
+        ctx.font = "11px monospace";
+        ctx.fillText(ch, x, y+2);
+        if(selected && Math.floor(this.msgClock*2.5)%2===0){
+          ctx.fillStyle = PAL.darkest;
+          ctx.font = "8px monospace";
+          ctx.fillText("▲", x, y-16);
+        }
+      });
+
+      ctx.fillStyle = PAL.darkest;
+      ctx.font = "6px monospace";
+      ctx.fillText("↑↓ BYT TECKEN · ←→ FLYTTA", W/2, 108);
+      if(Math.floor(this.msgClock*2)%2===0){
+        ctx.font = "7px monospace";
+        ctx.fillText("TRYCK START = KLAR", W/2, 124);
+      }
+    }
+    drawHighscoreList(){
+      this.rect(0,0,W,H, PAL.lightest);
+      const ctx = this.ctx;
+      ctx.textAlign='center';
+      ctx.fillStyle = PAL.darkest;
+      ctx.font = "12px monospace";
+      ctx.fillText("HIGHSCORE", W/2, 14);
+
+      // Två flikar - en per spelläge - för att välja vilken topp 5-tabell som visas.
+      const tabs = [
+        {id:'classic',    label:'KLASSISKT'},
+        {id:'timeattack', label:'TID-UTMANING'}
+      ];
+      const tabY = 20, tabH = 14, tabW = 74, gap = 4;
+      const tabStartX = W/2 - (tabW*2+gap)/2;
+      tabs.forEach((tab,i)=>{
+        const x = tabStartX + i*(tabW+gap);
+        const active = this.highscoreViewMode === tab.id;
+        this.rect(x, tabY, tabW, tabH, PAL.darkest);
+        this.rect(x+1, tabY+1, tabW-2, tabH-2, active ? PAL.dark : PAL.lightest);
+        ctx.fillStyle = active ? PAL.lightest : PAL.darkest;
+        ctx.font = "5px monospace";
+        ctx.fillText(tab.label, x+tabW/2, tabY+9);
+      });
+
+      const list = this.highscores[this.highscoreViewMode] || [];
+      if(list.length === 0){
+        ctx.fillStyle = PAL.darkest;
+        ctx.font = "7px monospace";
+        ctx.fillText("INGA RESULTAT ÄNNU", W/2, 76);
+      } else {
+        list.forEach((entry,i)=>{
+          const y = 50 + i*16;
+          ctx.textAlign='left';
+          ctx.font = "8px monospace";
+          ctx.fillStyle = PAL.darkest;
+          ctx.fillText((i+1)+". "+entry.name, 12, y);
+          ctx.textAlign='right';
+          ctx.font = "7px monospace";
+          ctx.fillText("RUNDA "+entry.round, W-12, y);
+        });
+      }
+
+      ctx.textAlign='center';
+      if(Math.floor(this.msgClock*2)%2===0){
+        ctx.fillStyle = PAL.darkest;
+        ctx.font = "6px monospace";
+        ctx.fillText("←→/SEL = BYT LISTA · A = TILLBAKA", W/2, 138);
+      }
+    }
+    drawConfirmQuit(){
+      // Frusen spelscen i bakgrunden så man ser vad man är på väg att överge.
+      this.drawScene();
+      this.drawHUD();
+      const ctx = this.ctx;
+      this.rect(14,44,132,60, PAL.darkest);
+      this.rect(16,46,128,56, PAL.lightest);
+      ctx.textAlign='center';
+      ctx.fillStyle = PAL.darkest;
+      ctx.font = "8px monospace";
+      ctx.fillText("ÖVERGE RUNDAN?", W/2, 58);
+      ctx.font = "6px monospace";
+      ctx.fillText("FRAMSTEGET GÅR FÖRLORAT", W/2, 68);
+
+      const optW = 44, optH = 16, gap = 8;
+      const totalW = optW*2+gap;
+      const startX = W/2 - totalW/2;
+      const y = 78;
+      [{label:'NEJ', idx:0},{label:'JA', idx:1}].forEach((o,i)=>{
+        const x = startX + i*(optW+gap);
+        const selected = this.confirmIndex === o.idx;
+        this.rect(x, y, optW, optH, PAL.darkest);
+        this.rect(x+1, y+1, optW-2, optH-2, selected ? PAL.dark : PAL.lightest);
+        ctx.fillStyle = selected ? PAL.lightest : PAL.darkest;
+        ctx.font = "8px monospace";
+        ctx.fillText(o.label, x+optW/2, y+11);
+      });
+
+      if(Math.floor(this.msgClock*2)%2===0){
+        ctx.fillStyle = PAL.darkest;
+        ctx.font = "6px monospace";
+        ctx.fillText("←→ VÄLJ · A BEKRÄFTA", W/2, 122);
+      }
+    }
+
+    // ---- huvudloop ----
+    loop(now){
+      let dt = (now-this.last)/1000; this.last = now;
+      dt = Math.min(dt, 0.05);
+      this.msgClock += dt;
+      if(this.msgTimer>0) this.msgTimer -= dt;
+      if(this.shake>0) this.shake = Math.max(0, this.shake-dt*40);
+      if(this.flash>0) this.flash = Math.max(0, this.flash-dt);
+
+      // Tid-utmaningens klocka ticker bara medan ett kast faktiskt pågår -
+      // inte i menyn, mellan rundor eller på game over-skärmen.
+      if(this.gameMode === 'timeattack' && ACTIVE_STATES.has(this.state)){
+        this.timeLeft = Math.max(0, this.timeLeft - dt);
+        if(this.timeLeft <= 0){
+          this.message = 'TIDEN UTGICK!';
+          this.msgTimer = 1.4;
+          this.audio.sfxOver();
+          this.endGame();
+        }
+      }
+
+      const ctx = this.ctx;
+      ctx.save();
+      if(this.shake>0) ctx.translate((Math.random()-0.5)*this.shake, (Math.random()-0.5)*this.shake);
+
+      if(this.isKingThrowNow()){
+        // Specialkastet: skärmen vänds upp och ned för att simulera att
+        // spelaren kastar bakåt mellan benen med ryggen mot kungen.
+        ctx.translate(W, H);
+        ctx.rotate(Math.PI);
+      }
+
+      if(this.state === 'menu'){
+        this.drawMenu(this.msgClock);
+      } else if(this.state === 'aim'){
+        this.aimT += dt*this.aimSpeed;
+        this.aimX = 80 + Math.sin(this.aimT)*60;
+        this.drawAim();
+        this.drawMessage();
+      } else if(this.state === 'power'){
+        this.powerT += dt*this.powerSpeed;
+        this.powerVal = 50 - 50*Math.cos(this.powerT);
+        this.drawPower();
+        this.drawMessage();
+      } else if(this.state === 'throw'){
+        this.throwAnim.t += dt;
+        this.throwAnim.rot += dt*30;
+        this.drawThrowAnim();
+        if(this.throwAnim.t >= this.throwAnim.dur) this.resolveThrow();
+      } else if(this.state === 'overpower'){
+        this.updateOverpower(dt);
+        if(this.state === 'overpower') this.drawOverpower(); // rita om inte sekvensen redan avslutats denna frame
+      } else if(this.state === 'roundclear'){
+        this.drawRoundClear();
+      } else if(this.state === 'gameover'){
+        this.drawGameOver();
+      } else if(this.state === 'nameentry'){
+        this.drawNameEntry();
+      } else if(this.state === 'highscoreList'){
+        this.drawHighscoreList();
+      } else if(this.state === 'confirmQuit'){
+        this.drawConfirmQuit();
+      }
+
+      // Efter runda 5 (dvs från runda 6) inverteras hela skärmens färger, som en
+      // extra svårighetskrydda. Från runda 10 skiftar färgerna ytterligare ett
+      // steg. Görs genom att rita en ruta med "difference"-blend ovanpå allt som
+      // redan ritats - en vit ruta ger en ren invertering, en färgad ruta ger en
+      // invertering som dessutom är färgskiftad (klassiskt canvas-trick, kräver
+      // inget CSS-filter som annars skulle påverka hela devicet, inte bara skärmen).
+      if(this.round >= INVERT_FROM_ROUND && this.state !== 'menu' && this.state !== 'highscoreList'){
+        ctx.save();
+        ctx.globalCompositeOperation = 'difference';
+        ctx.fillStyle = this.round >= INVERT_EXTRA_FROM_ROUND ? '#ff00c8' : '#ffffff';
+        ctx.fillRect(0,0,W,H);
+        ctx.restore();
+      }
+
+      if(this.flash>0){
+        ctx.fillStyle = 'rgba(255,255,255,'+(this.flash*0.6)+')';
+        ctx.fillRect(0,0,W,H);
+      }
+
+      ctx.restore();
+      requestAnimationFrame(this.loop);
+    }
+  }
+
+  new KubbGame(document.getElementById('gameCanvas'));
+})();
+</script>
+
+</body>
+</html>
