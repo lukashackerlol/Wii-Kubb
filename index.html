@@ -224,7 +224,7 @@
   const MODES = [
     {id:'classic',    label:'KLASSISKT',    desc:'FÄLL KUBBAR + KUNGEN'},
     {id:'timeattack',  label:'TID-UTMANING', desc:'SPRING MOT KLOCKAN'},
-    {id:'highscores',  label:'HIGHSCORE',   desc:'TOPP 5 LISTA'}
+    {id:'highscores',  label:'HIGHSCORE',   desc:'TOPP 10 LISTA'}
   ];
   const TIME_ATTACK_START = 60;      // sekunder vid start
   const TIME_BONUS_PER_ROUND = 10;   // bonussekunder när en runda klaras
@@ -234,7 +234,7 @@
   const NAME_CHARSET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ';
   const NAME_LEN = 6;          // antal tecken i namnet på highscore-listan
   const HIGHSCORE_KEY = 'wiiKubbHighscores';
-  const MAX_HIGHSCORES = 5;
+  const MAX_HIGHSCORES = 10;   // topp-10, både lokalt (offline-cache) och i det globala molnet
 
   // 8-bitars bakgrundsmusik (svensk folkmelodi-loop), 0 = paus/tystnad.
   const MUSIC_NOTE_DUR = 0.24;
@@ -348,9 +348,17 @@
       // Bekräftelsedialog för MENY-knappen - avbryter/pausar rundan tills man svarar.
       this.previousState = null;
       this.confirmIndex = 0; // 0 = NEJ (fortsätt), 1 = JA (avsluta)
-      // Highscore = en topp 5-lista PER spelläge ({classic:[...], timeattack:[...]}),
-      // sparas mellan besök i webbläsaren.
+      // Highscore = en topp 10-lista PER spelläge ({classic:[...], timeattack:[...]}).
+      // Det finns två källor:
+      //  - this.highscores: en lokal cache i localStorage, fungerar offline och
+      //    som omedelbar fallback om molnet inte kan nås.
+      //  - this.onlineHighscores: den globala listan hämtad från Firestore
+      //    (se WiiKubbCloud-modulen längst ner i filen), delad mellan alla spelare.
       this.highscores = this.loadHighscores();
+      this.onlineHighscores = {
+        classic:    { status:'idle', list:[] }, // status: idle | loading | loaded | error
+        timeattack: { status:'idle', list:[] }
+      };
       this.highscoreViewMode = 'classic'; // vilken av de två tabellerna som visas i highscore-fliken
       this.nameChars = [];      // tecken som skrivs in vid nytt highscore
       this.nameCursor = 0;
@@ -383,6 +391,17 @@
       // Binder loopen en gång istället för att skapa en ny bunden funktion
       // varje frame - undviker onödig allokering i den heta renderingsloopen.
       this.loop = this.loop.bind(this);
+
+      // Om Firebase-modulen (längst ner i filen) blir redo efter att spelet
+      // redan startat, eller efter ett tidigare misslyckat försök, gör vi om
+      // hämtningen så att listan självläker utan att spelaren behöver göra något.
+      window.addEventListener('wiikubb-cloud-ready', ()=>{
+        this.onlineHighscores.classic.status = 'idle';
+        this.onlineHighscores.timeattack.status = 'idle';
+        if(this.state === 'highscoreList'){
+          this.requestOnlineHighscores(this.highscoreViewMode, true);
+        }
+      });
 
       this.drawMenu(0);
       requestAnimationFrame(this.loop);
@@ -423,7 +442,7 @@
     }
     kubbsStanding(){ return this.kubbs.filter(k=>k.standing).length; }
 
-    // ---- highscore (topp 5 per spelläge) ----
+    // ---- highscore (topp 10 per spelläge) ----
     loadHighscores(){
       const empty = { classic: [], timeattack: [] };
       try{
@@ -447,6 +466,27 @@
       if(round <= 0) return false;
       if(list.length < MAX_HIGHSCORES) return true;
       return round > list[list.length-1].round;
+    }
+    // ---- global highscore-lista via Firestore (se WiiKubbCloud-modulen) ----
+    cloudReady(){
+      return !!(window.WiiKubbCloud && window.WiiKubbCloud.ready);
+    }
+    // Hämtar (eller uppdaterar) den globala topplistan för ett spelläge.
+    // force=true tvingar en ny hämtning även om vi redan har en laddad/pågående.
+    requestOnlineHighscores(mode, force){
+      const entry = this.onlineHighscores[mode];
+      if(!entry) return;
+      if(!force && (entry.status === 'loading' || entry.status === 'loaded')) return;
+      if(!this.cloudReady()){
+        entry.status = 'error';
+        return;
+      }
+      entry.status = 'loading';
+      window.WiiKubbCloud.fetchTopScores(mode, MAX_HIGHSCORES).then(list=>{
+        if(list === null){ entry.status = 'error'; return; }
+        entry.list = list;
+        entry.status = 'loaded';
+      });
     }
     // Kallas när en omgång tar slut - avgör om spelaren ska få skriva in
     // sitt namn (nytt highscore) eller gå direkt till GAME OVER-skärmen.
@@ -477,17 +517,27 @@
     submitName(){
       let name = this.nameChars.join('').trim();
       if(!name) name = 'SPELARE';
+      // Lokal cache - fungerar direkt och offline.
       const list = this.highscores[this.gameMode] || (this.highscores[this.gameMode] = []);
       list.push({ name, round:this.pendingHighscoreRound });
       list.sort((a,b)=>b.round-a.round);
       this.highscores[this.gameMode] = list.slice(0, MAX_HIGHSCORES);
       this.saveHighscores();
+      // Global lista - skickas i bakgrunden, blockerar inte spelet om nätet
+      // är långsamt eller nere.
+      if(this.cloudReady()){
+        window.WiiKubbCloud.submitScore(this.gameMode, name, this.pendingHighscoreRound);
+      }
+      // Nästa gång man öppnar highscore-listan ska den hämtas på nytt så att
+      // det egna resultatet syns.
+      this.onlineHighscores[this.gameMode].status = 'idle';
       this.highscoreViewMode = this.gameMode;
       this.audio.sfxWin();
       this.state = 'gameover';
     }
     toggleHighscoreView(){
       this.highscoreViewMode = this.highscoreViewMode === 'classic' ? 'timeattack' : 'classic';
+      this.requestOnlineHighscores(this.highscoreViewMode);
       this.audio.sfxLock();
     }
 
@@ -528,6 +578,7 @@
         const chosen = MODES[this.menuIndex];
         if(chosen.id === 'highscores'){
           this.audio.sfxLock();
+          this.requestOnlineHighscores(this.highscoreViewMode);
           this.state = 'highscoreList';
           return;
         }
@@ -1649,15 +1700,15 @@
       const ctx = this.ctx;
       ctx.textAlign='center';
       ctx.fillStyle = PAL.darkest;
-      ctx.font = "12px monospace";
-      ctx.fillText("HIGHSCORE", W/2, 14);
+      ctx.font = "10px monospace";
+      ctx.fillText("HIGHSCORE", W/2, 12);
 
-      // Två flikar - en per spelläge - för att välja vilken topp 5-tabell som visas.
+      // Två flikar - en per spelläge - för att välja vilken topp 10-tabell som visas.
       const tabs = [
         {id:'classic',    label:'KLASSISKT'},
         {id:'timeattack', label:'TID-UTMANING'}
       ];
-      const tabY = 20, tabH = 14, tabW = 74, gap = 4;
+      const tabY = 16, tabH = 12, tabW = 74, gap = 4;
       const tabStartX = W/2 - (tabW*2+gap)/2;
       tabs.forEach((tab,i)=>{
         const x = tabStartX + i*(tabW+gap);
@@ -1666,24 +1717,44 @@
         this.rect(x+1, tabY+1, tabW-2, tabH-2, active ? PAL.dark : PAL.lightest);
         ctx.fillStyle = active ? PAL.lightest : PAL.darkest;
         ctx.font = "5px monospace";
-        ctx.fillText(tab.label, x+tabW/2, tabY+9);
+        ctx.fillText(tab.label, x+tabW/2, tabY+8);
       });
 
-      const list = this.highscores[this.highscoreViewMode] || [];
+      // Global lista (Firestore) om den finns laddad, annars den lokala
+      // offline-cachen som fallback, med en liten statusrad som förklarar
+      // vilken av de två som visas just nu.
+      const online = this.onlineHighscores[this.highscoreViewMode];
+      const usingOnline = online.status === 'loaded';
+      const list = usingOnline ? online.list : (this.highscores[this.highscoreViewMode] || []);
+
+      ctx.textAlign='center';
+      ctx.font = "5px monospace";
+      ctx.fillStyle = PAL.dark;
+      if(online.status === 'loading'){
+        ctx.fillText("HÄMTAR GLOBAL LISTA...", W/2, 34);
+      } else if(online.status === 'error'){
+        ctx.fillText("OFFLINE – VISAR LOKAL LISTA", W/2, 34);
+      } else if(usingOnline){
+        ctx.fillText("GLOBAL TOPP "+MAX_HIGHSCORES, W/2, 34);
+      } else {
+        ctx.fillText("LOKAL LISTA", W/2, 34);
+      }
+
       if(list.length === 0){
         ctx.fillStyle = PAL.darkest;
         ctx.font = "7px monospace";
         ctx.fillText("INGA RESULTAT ÄNNU", W/2, 76);
       } else {
-        list.forEach((entry,i)=>{
-          const y = 50 + i*16;
+        const rowH = 10;
+        list.slice(0, MAX_HIGHSCORES).forEach((entry,i)=>{
+          const y = 44 + i*rowH;
           ctx.textAlign='left';
-          ctx.font = "8px monospace";
+          ctx.font = "6px monospace";
           ctx.fillStyle = PAL.darkest;
-          ctx.fillText((i+1)+". "+entry.name, 12, y);
+          ctx.fillText((i+1)+". "+entry.name, 10, y);
           ctx.textAlign='right';
-          ctx.font = "7px monospace";
-          ctx.fillText("RUNDA "+entry.round, W-12, y);
+          ctx.font = "5px monospace";
+          ctx.fillText("R"+entry.round, W-10, y);
         });
       }
 
@@ -1691,7 +1762,7 @@
       if(Math.floor(this.msgClock*2)%2===0){
         ctx.fillStyle = PAL.darkest;
         ctx.font = "6px monospace";
-        ctx.fillText("←→/SEL = BYT LISTA · A = TILLBAKA", W/2, 138);
+        ctx.fillText("←→/SEL = BYT · A = TILLBAKA", W/2, 140);
       }
     }
     drawConfirmQuit(){
@@ -1877,6 +1948,101 @@
     }
   })();
 })();
+</script>
+
+<!--
+  ============================================================================
+  WiiKubbCloud - Firestore-backad global topplista.
+  Detta är en ES-modul (type="module"), så den laddas asynkront efter det
+  klassiska spelskriptet ovan. Den exponerar window.WiiKubbCloud med två
+  metoder som spelet anropar:
+    - submitScore(mode, name, round)  -> skickar ett resultat till molnet
+    - fetchTopScores(mode, topN)      -> hämtar topplistan för ett spelläge
+  samt skickar ut ett 'wiikubb-cloud-ready'-event när allt är klart, så att
+  spelet kan göra om en misslyckad hämtning så fort anslutningen finns.
+
+  VIKTIGT - du måste göra två saker i Firebase-konsolen innan detta fungerar:
+  1. Slå på Firestore Database (Native mode) för projektet "wii-kubb".
+  2. Sätt säkerhetsregler som tillåter att skapa nya dokument men inte att
+     ändra/radera andras, samt validerar att fälten ser rimliga ut. Se
+     förslag i mitt svar i chatten - jag kan inte sätta detta åt dig
+     eftersom det görs i Firebase-konsolen, inte i den här filen.
+  ============================================================================
+-->
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-app.js";
+  import { getAnalytics } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-analytics.js";
+  import {
+    getFirestore, collection, addDoc, query, where, orderBy, limit, getDocs, serverTimestamp
+  } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js";
+
+  // Your web app's Firebase configuration
+  const firebaseConfig = {
+    apiKey: "AIzaSyBJ5TLp_W-g_3GcyHJDTUs6Bao_ST05wvQ",
+    authDomain: "wii-kubb.firebaseapp.com",
+    projectId: "wii-kubb",
+    storageBucket: "wii-kubb.firebasestorage.app",
+    messagingSenderId: "537067638054",
+    appId: "1:537067638054:web:2acea8e9edc0301a37c5e7",
+    measurementId: "G-RTBP3TVBJ7"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  // Analytics kan misslyckas tyst (t.ex. om en adblocker stoppar den) -
+  // det ska aldrig hindra själva spelet eller topplistan från att fungera.
+  try{ getAnalytics(app); }catch(e){ console.warn('Firebase Analytics kunde inte starta:', e); }
+
+  const db = getFirestore(app);
+  const SCORES_COLLECTION = 'scores';
+  const VALID_MODES = new Set(['classic', 'timeattack']);
+
+  async function submitScore(mode, name, round){
+    if(!VALID_MODES.has(mode)) return false;
+    const cleanName = String(name || 'SPELARE').slice(0, 8);
+    const cleanRound = Math.max(0, Math.min(999, Math.floor(Number(round) || 0)));
+    try{
+      await addDoc(collection(db, SCORES_COLLECTION), {
+        mode,
+        name: cleanName,
+        round: cleanRound,
+        createdAt: serverTimestamp()
+      });
+      return true;
+    }catch(err){
+      console.error('WiiKubbCloud: kunde inte spara resultat', err);
+      return false;
+    }
+  }
+
+  async function fetchTopScores(mode, topN){
+    if(!VALID_MODES.has(mode)) return [];
+    topN = Math.max(1, Math.min(25, topN || 10));
+    try{
+      const q = query(
+        collection(db, SCORES_COLLECTION),
+        where('mode', '==', mode),
+        orderBy('round', 'desc'),
+        limit(topN)
+      );
+      const snap = await getDocs(q);
+      const out = [];
+      snap.forEach(docSnap=>{
+        const d = docSnap.data();
+        out.push({
+          name: String(d.name || '???').slice(0, 8),
+          round: typeof d.round === 'number' ? d.round : 0
+        });
+      });
+      return out;
+    }catch(err){
+      // Vanligast: nätet är nere, eller Firestore-regler/index saknas ännu.
+      console.error('WiiKubbCloud: kunde inte hämta topplista', err);
+      return null; // null = fel (spelet faller tillbaka på den lokala listan)
+    }
+  }
+
+  window.WiiKubbCloud = { submitScore, fetchTopScores, ready: true };
+  window.dispatchEvent(new Event('wiikubb-cloud-ready'));
 </script>
 
 </body>
