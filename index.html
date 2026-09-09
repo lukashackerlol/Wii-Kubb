@@ -105,7 +105,6 @@
     text-align:center; color:#4b4a68; font-size:10px; margin-top:14px; letter-spacing:.5px;
   }
 
-
   /* ---- vy-växlare ---- */
   .view-toggle{
     position:fixed; top:14px; right:14px; z-index:50;
@@ -146,7 +145,6 @@
 </style>
 </head>
 <body>
-
 
 <div class="device">
   <div class="brand">WII-KUBB <span>BOY</span></div>
@@ -345,23 +343,8 @@
       this.state = 'menu'; // menu, aim, power, throw, overpower, kingfall, seagullhit, roundclear, gameover, nameentry, highscoreList, confirmQuit
       this.gameMode = 'classic'; // 'classic' | 'timeattack'
       this.menuIndex = 0;
-      this.menuPage = 'main'; // main | local | join
-      this.roomCodeChars = ['A','A','A','A'];
-      this.roomCodeCursor = 0;
-      this.onlineBusy = false;
-      this.onlineStatus = '';
       this.timeLeft = 0;
       this.round = 1;
-
-      // ---- online multiplayer ----
-      this.multiplayer = false;
-      this.multiplayerRole = null; // 1 = Spelare 1, 2 = Spelare 2
-      this.roomCode = null;
-      this.currentTurn = 1;
-      this.onlineUnsubscribe = null;
-      this.onlineLastVersion = 0;
-      this.onlineReady = false;
-      this.onlinePlayers = {player1:false, player2:false};
       // Bekräftelsedialog för MENY-knappen - avbryter/pausar rundan tills man svarar.
       this.previousState = null;
       this.confirmIndex = 0; // 0 = NEJ (fortsätt), 1 = JA (avsluta)
@@ -394,7 +377,6 @@
       this.aimSpeed = 2.6; this.powerSpeed = 3.6;
 
       this.throwAnim = null;
-      this.remoteThrow = null;
       this.overAnim = null; // {t, rot, phase} - "överkraft"-sekvensen (anime-cutscene)
       this.fallenPieces = []; // {x,y,type:'kubb'|'king'}
       this.kingFallAnim = null; // {t,dur,x,y,impactDone} - animationen när Kungen träffas och ramlar
@@ -425,216 +407,10 @@
       requestAnimationFrame(this.loop);
     }
 
-    // ---- online multiplayer ----
-    isMyTurn(){
-      return !this.multiplayer || this.multiplayerRole === this.currentTurn;
-    }
-    onlineStatusText(){
-      if(!this.multiplayer) return '';
-      if(this.roomCode) return 'RUM '+this.roomCode+' · ';
-      return '';
-    }
-    stopOnline(){
-      if(this.onlineUnsubscribe){
-        try{ this.onlineUnsubscribe(); }catch(e){}
-        this.onlineUnsubscribe = null;
-      }
-      this.multiplayer = false;
-      this.multiplayerRole = null;
-      this.roomCode = null;
-      this.currentTurn = 1;
-      this.onlineLastVersion = 0;
-    }
-    async startOnlineHost(){
-      if(!window.WiiKubbOnline || !window.WiiKubbOnline.ready){
-        window.dispatchEvent(new Event('wiikubb-online-needed'));
-        return {ok:false,error:'Firebase är inte redo ännu.'};
-      }
-      this.stopOnline();
-      const result = await window.WiiKubbOnline.createRoom();
-      if(!result || !result.ok) return result || {ok:false,error:'Kunde inte skapa rum.'};
-
-      this.multiplayer = true;
-      this.multiplayerRole = 1;
-      this.roomCode = result.code;
-      this.currentTurn = 1;
-      this.gameMode = 'classic';
-      this.startGame();
-      this.state = 'waiting';
-      this.message = 'VÄNTAR PÅ SPELARE 2';
-      this.subscribeOnlineRoom();
-      await this.publishOnlineState(null, 'waitingForPlayer2');
-      return {ok:true,code:this.roomCode};
-    }
-    async startOnlineJoin(code){
-      code = String(code || '').trim().toUpperCase();
-      if(!/^[A-Z0-9]{4}$/.test(code)){
-        return {ok:false,error:'RUMSKODEN MÅSTE VARA 4 TECKEN.'};
-      }
-      if(!window.WiiKubbOnline || !window.WiiKubbOnline.ready){
-        window.dispatchEvent(new Event('wiikubb-online-needed'));
-        return {ok:false,error:'Firebase är inte redo ännu.'};
-      }
-      this.stopOnline();
-      const result = await window.WiiKubbOnline.joinRoom(code);
-      if(!result || !result.ok) return result || {ok:false,error:'Kunde inte gå med i rummet.'};
-
-      this.multiplayer = true;
-      this.multiplayerRole = 2;
-      this.roomCode = code;
-      this.subscribeOnlineRoom();
-      return {ok:true,code};
-    }
-    subscribeOnlineRoom(){
-      if(!window.WiiKubbOnline || !this.roomCode) return;
-      if(this.onlineUnsubscribe){
-        try{ this.onlineUnsubscribe(); }catch(e){}
-      }
-      this.onlineUnsubscribe = window.WiiKubbOnline.listenRoom(this.roomCode, snapshot=>{
-        if(!snapshot) return;
-        // Egen skrivning ignoreras.
-        const version = Number(snapshot.version || 0);
-        if(version && version <= this.onlineLastVersion) return;
-        this.onlineLastVersion = version;
-        this.applyOnlineState(snapshot);
-      });
-    }
-    onlineSnapshot(lastThrow, status){
-      return {
-        version: Date.now(),
-        gameMode: 'classic',
-        round: this.round,
-        phase: this.phase,
-        batons: Math.max(0, this.batons),
-        kubbs: this.kubbs.map(k=>({x:k.x,standing:!!k.standing})),
-        fallenPieces: this.fallenPieces.map(p=>({x:p.x,y:p.y,type:p.type})),
-        currentTurn: this.currentTurn,
-        status: status || 'waiting',
-        lastThrow: lastThrow ? {
-          x:Number(lastThrow.x)||0,
-          y:Number(lastThrow.y)||0,
-          by:this.multiplayerRole,
-          at:Date.now()
-        } : null,
-        message: this.message || ''
-      };
-    }
-    async publishOnlineState(lastThrow, status){
-      if(!this.multiplayer || !this.roomCode || !window.WiiKubbOnline) return;
-      const snap = this.onlineSnapshot(lastThrow,status);
-      this.onlineLastVersion = snap.version;
-      try{
-        await window.WiiKubbOnline.setRoomState(this.roomCode, snap);
-      }catch(err){
-        console.error('WiiKubb: kunde inte synka onlineläge',err);
-      }
-    }
-    applyOnlineState(s){
-      if(!this.multiplayer) return;
-      this.currentTurn = Number(s.currentTurn) === 2 ? 2 : 1;
-      this.onlinePlayers = {player1:!!s.player1, player2:!!s.player2};
-      if(Array.isArray(s.kubbs)){
-        this.kubbs = s.kubbs.map(k=>({x:Number(k.x),standing:!!k.standing}));
-      }
-      if(Array.isArray(s.fallenPieces)){
-        this.fallenPieces = s.fallenPieces.map(p=>({x:Number(p.x),y:Number(p.y),type:p.type}));
-      }
-      this.round = Math.max(1,Number(s.round)||1);
-      this.phase = s.phase === 'king' ? 'king' : 'kubbs';
-      this.batons = Math.max(0,Number(s.batons)||0);
-      this.throwAnim = null;
-      this.remoteThrow = null;
-      this.overAnim = null;
-      this.kingFallAnim = null;
-      this.seagullHitAnim = null;
-      this.seagull = null;
-
-      // Visa senaste kastet kort på skärmen, men låt inte fjärrspelaren
-      // påverka den lokala spelmotorn med en ny kastanimation.
-      if(s.lastThrow && Number(s.lastThrow.by) !== this.multiplayerRole){
-        this.remoteThrow = {
-          x:Number(s.lastThrow.x)||80,
-          y:Number(s.lastThrow.y)||80,
-          t:0
-        };
-      }
-
-      if(s.status === 'gameover'){
-        this.state = 'gameover';
-        return;
-      }
-      if(s.status === 'waitingForPlayer2' || !this.onlinePlayers.player2){
-        this.state = 'waiting';
-        this.message = 'VÄNTAR PÅ SPELARE 2';
-        this.msgTimer = 0;
-        return;
-      }
-      if(this.isMyTurn()){
-        this.state = 'aim';
-        this.aimT = Math.random()*10;
-        this.message = 'DIN TUR – SPELARE '+this.multiplayerRole;
-        this.msgTimer = 1.0;
-      }else{
-        this.state = 'waiting';
-        this.message = 'SPELARE '+this.currentTurn+' KASTAR...';
-        this.msgTimer = 0;
-      }
-    }
-    completeOnlineTurn(lastThrow){
-      if(!this.multiplayer) return;
-      this.currentTurn = this.currentTurn === 1 ? 2 : 1;
-      this.state = 'waiting';
-      this.message = 'SPELARE '+this.currentTurn+' KASTAR...';
-      this.msgTimer = 0;
-      this.publishOnlineState(lastThrow,'waiting');
-    }
-    endOnlineGame(){
-      if(!this.multiplayer) return false;
-      this.state = 'gameover';
-      this.publishOnlineState(this.throwAnim ? {
-        x:this.throwAnim.x1,y:this.throwAnim.y1
-      } : null,'gameover');
-      return true;
-    }
-    drawWaiting(){
-      this.drawField();
-      this.kubbs.forEach(k=>{ if(k.standing) this.drawKubb(k.x, KUBB_Y, true); });
-      this.fallenPieces.forEach(p=>{
-        if(p.type==='kubb') this.drawKubb(p.x,p.y,false);
-        else if(p.type==='king') this.drawKing(p.x,p.y,true);
-      });
-      const kingFallen = this.fallenPieces.some(p=>p.type==='king');
-      if(!kingFallen) this.drawKing(KING_X, KING_Y, false);
-      this.drawThrower();
-      if(this.remoteThrow){
-        const a=this.remoteThrow;
-        this.drawBaton(a.x,a.y,0,1);
-        this.rect(a.x-2,a.y-8,4,1,PAL.darkest);
-      }
-      this.centerText(this.message || ('SPELARE '+this.currentTurn+' KASTAR...'), 126, PAL.darkest, 6);
-      if(this.roomCode) this.centerText('RUM '+this.roomCode, 14, PAL.darkest, 6);
-    }
-
     cycleMode(dir){
       dir = dir || 1;
-      const count = this.menuPage === 'main' ? 4 : 2;
-      this.menuIndex = (this.menuIndex + dir + count) % count;
+      this.menuIndex = (this.menuIndex + dir + MODES.length) % MODES.length;
       this.audio.sfxLock();
-    }
-    cycleRoomChar(dir){
-      const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-      let i = chars.indexOf(this.roomCodeChars[this.roomCodeCursor]);
-      if(i < 0) i = 0;
-      i = (i + dir + chars.length) % chars.length;
-      this.roomCodeChars[this.roomCodeCursor] = chars[i];
-      this.audio.sfxLock();
-    }
-    moveRoomCursor(dir){
-      this.roomCodeCursor = Math.max(0, Math.min(3, this.roomCodeCursor + dir));
-      this.audio.sfxLock();
-    }
-    roomCodeValue(){
-      return this.roomCodeChars.join('');
     }
 
     // ---- rundor & svårighetsgrad ----
@@ -716,7 +492,6 @@
     // sitt namn (nytt highscore) eller gå direkt till GAME OVER-skärmen.
     endGame(){
       this.throwAnim = null;
-      this.remoteThrow = null;
       this.overAnim = null;
       if(this.qualifiesForHighscore(this.round, this.gameMode)){
         this.pendingHighscoreRound = this.round;
@@ -797,64 +572,24 @@
     // ---- input ----
     actionPress(){
       this.audio.ensure();
-      if(this.multiplayer && !this.isMyTurn() && this.state !== 'gameover') return;
       if(this.state === 'confirmQuit'){ this.resolveConfirm(); return; }
       if(this.state === 'overpower'){ this.attemptEarthCatch(); return; }
       if(this.state === 'menu'){
-        if(this.menuPage === 'main'){
-          if(this.menuIndex === 0){
-            this.menuPage = 'local'; this.menuIndex = 0; this.audio.sfxLock(); return;
-          }
-          if(this.menuIndex === 1){
-            this.onlineBusy = true; this.onlineStatus = 'SKAPAR RUM...'; this.drawMenu(0);
-            this.startOnlineHost().then(result=>{
-              this.onlineBusy = false;
-              this.onlineStatus = result && result.ok ? 'RUM '+result.code : ((result&&result.error)||'KUNDE INTE SKAPA RUM');
-              if(result && result.ok) this.state='waiting';
-            });
-            return;
-          }
-          if(this.menuIndex === 2){
-            this.menuPage = 'join'; this.menuIndex = 0; this.roomCodeChars=['A','A','A','A']; this.roomCodeCursor=0; this.onlineStatus=''; return;
-          }
+        const chosen = MODES[this.menuIndex];
+        if(chosen.id === 'highscores'){
           this.audio.sfxLock();
           this.requestOnlineHighscores(this.highscoreViewMode);
           this.state = 'highscoreList';
           return;
         }
-
-        if(this.menuPage === 'local'){
-          this.gameMode = this.menuIndex === 0 ? 'classic' : 'timeattack';
-          this.menuPage = 'main'; this.menuIndex = 0;
-          this.startGame();
-          return;
-        }
-
-        if(this.menuPage === 'join'){
-          const code=this.roomCodeValue();
-          this.onlineBusy=true; this.onlineStatus='ANSLUTER...';
-          this.startOnlineJoin(code).then(result=>{
-            this.onlineBusy=false;
-            if(!result || !result.ok){
-              this.onlineStatus=(result&&result.error)||'KUNDE INTE GÅ MED';
-              return;
-            }
-            this.onlineStatus='';
-            this.state='waiting';
-          });
-          return;
-        }
+        this.gameMode = chosen.id;
+        this.startGame();
+        return;
       }
       if(this.state === 'highscoreList'){ this.state = 'menu'; return; }
       if(this.state === 'nameentry'){ this.nameEntryChangeLetter(1); return; }
       if(this.state === 'gameover'){ this.state = 'menu'; return; }
       if(this.state === 'roundclear'){
-        if(this.multiplayer){
-          this.round++;
-          this.newRound();
-          this.publishOnlineState(null,'waiting');
-          return;
-        }
         if(this.gameMode === 'timeattack') this.timeLeft += TIME_BONUS_PER_ROUND;
         this.round++; this.newRound();
         return;
@@ -974,12 +709,7 @@
       this.batons--;
       if(this.batons <= 0){
         this.audio.sfxOver();
-        if(this.multiplayer) this.endOnlineGame();
-        else this.endGame();
-        return;
-      }
-      if(this.multiplayer){
-        this.completeOnlineTurn(null);
+        this.endGame();
         return;
       }
       this.state = 'aim';
@@ -1057,12 +787,8 @@
         this.message = 'SIKTA PÅ KUNGEN!';
         this.msgTimer = 1.3;
         this.throwAnim = null;
-        if(this.multiplayer){
-          this.completeOnlineTurn({x:x1,y:y1});
-        }else{
-          this.state = 'aim';
-          this.aimT = Math.random()*10;
-        }
+        this.state = 'aim';
+        this.aimT = Math.random()*10;
         return;
       }
 
@@ -1072,23 +798,14 @@
           this.throwAnim = null;
         } else {
           this.audio.sfxOver();
-          if(this.multiplayer) this.endOnlineGame();
-          else this.endGame();
+          this.endGame();
         }
         return;
       }
 
       if(this.batons <= 0){
         this.audio.sfxOver();
-        if(this.multiplayer) this.endOnlineGame();
-        else this.endGame();
-        return;
-      }
-
-      if(this.multiplayer){
-        const lastThrow = {x:x1,y:y1};
-        this.throwAnim = null;
-        this.completeOnlineTurn(lastThrow);
+        this.endGame();
         return;
       }
 
@@ -1180,12 +897,7 @@
       this.seagullCooldown = SEAGULL_GAP_MIN + Math.random()*(SEAGULL_GAP_MAX-SEAGULL_GAP_MIN);
       if(this.batons <= 0){
         this.audio.sfxOver();
-        if(this.multiplayer) this.endOnlineGame();
-        else this.endGame();
-        return;
-      }
-      if(this.multiplayer){
-        this.completeOnlineTurn(null);
+        this.endGame();
         return;
       }
       this.state = 'aim';
@@ -1210,22 +922,10 @@
           if(e.code === 'Escape'){ e.preventDefault(); this.confirmIndex = 0; this.resolveConfirm(); return; }
           return;
         }
-        if(this.state === 'menu' && this.menuPage === 'join'){
-          if(e.code==='ArrowUp'){ e.preventDefault(); this.cycleRoomChar(1); return; }
-          if(e.code==='ArrowDown'){ e.preventDefault(); this.cycleRoomChar(-1); return; }
-          if(e.code==='ArrowLeft'){ e.preventDefault(); this.moveRoomCursor(-1); return; }
-          if(e.code==='ArrowRight'){ e.preventDefault(); this.moveRoomCursor(1); return; }
-        }
         if(e.code === 'Space' || e.code === 'Enter'){ e.preventDefault(); this.actionPress(); }
-        if(e.key === 'b' || e.key === 'B'){
-          if(this.state === 'menu' && this.menuPage !== 'main'){
-            this.menuPage='main'; this.menuIndex=0; this.onlineBusy=false; this.onlineStatus='';
-            this.audio.sfxLock(); return;
-          }
-          this.audio.toggleSound();
-        }
+        if(e.key === 'b' || e.key === 'B'){ this.audio.toggleSound(); }
         if(e.code === 'Escape'){ e.preventDefault(); this.requestQuitConfirm(); }
-        if(this.state === 'menu' && this.menuPage !== 'join' && (e.code==='ArrowUp'||e.code==='ArrowDown'||e.code==='ArrowLeft'||e.code==='ArrowRight')){
+        if(this.state === 'menu' && (e.code==='ArrowUp'||e.code==='ArrowDown'||e.code==='ArrowLeft'||e.code==='ArrowRight')){
           e.preventDefault();
           const dir = (e.code==='ArrowUp'||e.code==='ArrowLeft') ? -1 : 1;
           this.cycleMode(dir);
@@ -1243,10 +943,7 @@
       document.getElementById('btnB').addEventListener('click', ()=>this.audio.toggleSound());
       document.getElementById('btnMenu').addEventListener('click', ()=>this.requestQuitConfirm());
       document.getElementById('btnSelect').addEventListener('click', ()=>{
-        if(this.state === 'menu'){
-          if(this.menuPage === 'join') this.cycleRoomChar(1);
-          else this.cycleMode();
-        }
+        if(this.state === 'menu'){ this.cycleMode(); }
         else if(this.state === 'gameover'){ this.state = 'menu'; }
         else if(this.state === 'highscoreList'){ this.toggleHighscoreView(); }
         else if(this.state === 'nameentry'){ this.nameEntryMoveCursor(-1); }
@@ -1254,10 +951,7 @@
       });
       const dpad = document.querySelector('.dpad');
       if(dpad) dpad.addEventListener('click', ()=>{
-        if(this.state === 'menu'){
-          if(this.menuPage === 'join') this.cycleRoomChar(1);
-          else this.cycleMode();
-        }
+        if(this.state === 'menu'){ this.cycleMode(); }
         else if(this.state === 'nameentry'){ this.nameEntryMoveCursor(1); }
         else if(this.state === 'highscoreList'){ this.toggleHighscoreView(); }
         else if(this.state === 'confirmQuit'){ this.toggleConfirmChoice(); }
@@ -1364,78 +1058,28 @@
       this.rect(0,0,W,H, PAL.lightest);
       const ctx = this.ctx;
       ctx.textAlign='center';
-
-      // Rubrik
       ctx.fillStyle = PAL.darkest;
       ctx.font = "13px monospace";
       ctx.fillText("WII-KUBB", W/2, 16);
-      ctx.font = "5px monospace";
+      ctx.font = "6px monospace";
+      ctx.fillText("VÄLJ SPELLÄGE", W/2, 25);
 
-      if(this.menuPage === 'main'){
-        ctx.fillText("VÄLJ HUR DU VILL SPELA", W/2, 25);
-        const items = [
-          ["SPELA LOKALT",""],
-          ["SKAPA ONLINE-RUM",""],
-          ["GÅ MED I RUM",""],
-          ["HIGHSCORE",""]
-        ];
-        items.forEach((item,i)=>{
-          const y=31+i*22, selected=i===this.menuIndex;
-          this.rect(22,y,116,18, PAL.darkest);
-          this.rect(24,y+2,112,14, selected?PAL.dark:PAL.lightest);
-          ctx.fillStyle=selected?PAL.lightest:PAL.darkest;
-          ctx.font="6px monospace";
-          ctx.fillText(item[0],W/2,y+11);
-        });
-        if(Math.floor(t*2)%2===0){
-          ctx.fillStyle=PAL.darkest; ctx.font="5px monospace";
-          ctx.fillText("A = VÄLJ   ↑↓ = BYT",W/2,130);
-        }
-        return;
-      }
+      MODES.forEach((m,i)=>{
+        const y = 30 + i*25;
+        const selected = i === this.menuIndex;
+        this.rect(W/2-64, y, 128, 21, PAL.darkest);
+        this.rect(W/2-62, y+2, 124, 17, selected ? PAL.dark : PAL.lightest);
+        ctx.fillStyle = selected ? PAL.lightest : PAL.darkest;
+        ctx.font = "7px monospace";
+        ctx.fillText(m.label, W/2, y+10);
+        ctx.font = "5px monospace";
+        ctx.fillText(m.desc, W/2, y+17);
+      });
 
-      if(this.menuPage === 'local'){
-        ctx.fillText("VÄLJ SPELLÄGE",W/2,25);
-        const items=[
-          ["KLASSISKT","FÄLL KUBBAR + KUNGEN"],
-          ["TID-UTMANING","SPRING MOT KLOCKAN"]
-        ];
-        items.forEach((item,i)=>{
-          const y=38+i*31, selected=i===this.menuIndex;
-          this.rect(14,y,132,26,PAL.darkest);
-          this.rect(16,y+2,128,22,selected?PAL.dark:PAL.lightest);
-          ctx.fillStyle=selected?PAL.lightest:PAL.darkest;
-          ctx.font="7px monospace"; ctx.fillText(item[0],W/2,y+10);
-          ctx.font="4px monospace"; ctx.fillText(item[1],W/2,y+18);
-        });
-        ctx.fillStyle=PAL.darkest; ctx.font="5px monospace";
-        ctx.fillText("B = TILLBAKA   A = VÄLJ",W/2,128);
-        return;
-      }
-
-      // Rumskod väljs helt på konsolens skärm.
-      ctx.fillText("GÅ MED I ONLINE-RUM",W/2,25);
-      ctx.font="5px monospace"; ctx.fillText("VÄLJ RUMSKOD",W/2,37);
-
-      for(let i=0;i<4;i++){
-        const x=50+i*20;
-        const selected=i===this.roomCodeCursor;
-        this.rect(x-8,48,16,22, PAL.darkest);
-        this.rect(x-6,50,12,18, selected?PAL.dark:PAL.lightest);
-        ctx.fillStyle=selected?PAL.lightest:PAL.darkest;
-        ctx.font="11px monospace";
-        ctx.fillText(this.roomCodeChars[i],x,64);
-        if(selected && Math.floor(t*3)%2===0){
-          ctx.fillStyle=PAL.darkest; ctx.fillRect(x-5,69,10,1);
-        }
-      }
-      ctx.fillStyle=PAL.darkest; ctx.font="5px monospace";
-      ctx.fillText("↑↓ = TECKEN   ←→ = FLYTTA",W/2,85);
-      ctx.fillText("A = ANSLUT",W/2,96);
-      ctx.fillText("B = TILLBAKA",W/2,107);
-      if(this.onlineBusy || this.onlineStatus){
-        ctx.font="5px monospace";
-        ctx.fillText(this.onlineStatus || "ANSLUTER...",W/2,124);
+      if(Math.floor(t*2)%2===0){
+        ctx.fillStyle = PAL.darkest;
+        ctx.font = "7px monospace";
+        ctx.fillText("TRYCK A = VÄLJ · ↑↓ BYT", W/2, 138);
       }
     }
     drawHUD(){
@@ -1945,18 +1589,8 @@
       }
       if(a.t >= a.dur){
         const onDone = a.onDone;
-        const kingWasGameOver = onDone === 'gameover';
         this.kingFallAnim = null;
-        if(this.multiplayer){
-          if(kingWasGameOver){
-            this.endOnlineGame();
-          }else{
-            this.currentTurn = this.currentTurn === 1 ? 2 : 1;
-            this.state = 'waiting';
-            this.message = 'SPELARE '+this.currentTurn+' KASTAR...';
-            this.publishOnlineState(null,'roundclear');
-          }
-        }else if(kingWasGameOver) this.endGame();
+        if(onDone === 'gameover') this.endGame();
         else this.state = 'roundclear';
       }
     }
@@ -2240,8 +1874,6 @@
       } else if(this.state === 'kingfall'){
         this.updateKingFall(dt);
         if(this.state === 'kingfall') this.drawKingFallScene(); // rita om inte animationen redan avslutats denna frame
-      } else if(this.state === 'waiting'){
-        this.drawWaiting();
       } else if(this.state === 'roundclear'){
         this.drawRoundClear();
       } else if(this.state === 'gameover'){
@@ -2314,9 +1946,6 @@
         if(document.body.classList.contains('fullscreen-mode')) kubbGame.actionPress();
       });
     }
-
-
-
   })();
 })();
 </script>
@@ -2346,9 +1975,6 @@
   import {
     getFirestore, collection, addDoc, query, where, orderBy, limit, getDocs, serverTimestamp
   } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js";
-  import {
-    getDatabase, ref, set, get, onValue, onDisconnect, update, runTransaction
-  } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-database.js";
 
   // Your web app's Firebase configuration
   const firebaseConfig = {
@@ -2367,7 +1993,6 @@
   try{ getAnalytics(app); }catch(e){ console.warn('Firebase Analytics kunde inte starta:', e); }
 
   const db = getFirestore(app);
-  const realtimeDb = getDatabase(app);
   const SCORES_COLLECTION = 'scores';
   const VALID_MODES = new Set(['classic', 'timeattack']);
 
@@ -2415,117 +2040,6 @@
       return null; // null = fel (spelet faller tillbaka på den lokala listan)
     }
   }
-
-
-  // ---------------------------------------------------------------------------
-  // WiiKubbOnline - Firebase Realtime Database för turbaserat tvåspelarspel.
-  //
-  // Ett rum innehåller endast spelstatus. Spelarnas sikte/kraft beräknas lokalt;
-  // när ett kast är färdigt skrivs den nya spelstatusen till Realtime Database.
-  // ---------------------------------------------------------------------------
-  const ROOMS_PATH = 'rooms';
-  const ROOM_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-
-  function randomRoomCode(){
-    let code='';
-    for(let i=0;i<4;i++) code += ROOM_CHARS[Math.floor(Math.random()*ROOM_CHARS.length)];
-    return code;
-  }
-
-  async function createRoom(){
-    for(let attempt=0;attempt<12;attempt++){
-      const code=randomRoomCode();
-      const roomRef=ref(realtimeDb, `${ROOMS_PATH}/${code}`);
-      try{
-        const snap=await get(roomRef);
-        if(snap.exists()) continue;
-        const initial={
-          version:0,
-          gameMode:'classic',
-          round:1,
-          phase:'kubbs',
-          batons:8,
-          kubbs:[
-            {x:30,standing:true},{x:55,standing:true},{x:80,standing:true},
-            {x:105,standing:true},{x:130,standing:true}
-          ],
-          fallenPieces:[],
-          currentTurn:1,
-          status:'waiting',
-          player1:true,
-          player2:false,
-          players:{player1:{connected:true},player2:{connected:false}},
-          createdAt:Date.now()
-        };
-        await set(roomRef,initial);
-        const presenceRef=ref(realtimeDb, `${ROOMS_PATH}/${code}/players/player1/connected`);
-        await onDisconnect(presenceRef).set(false);
-        return {ok:true,code};
-      }catch(err){
-        console.error('WiiKubbOnline: kunde inte skapa rum',err);
-        return {ok:false,error:'Kunde inte skapa online-rum.'};
-      }
-    }
-    return {ok:false,error:'Kunde inte hitta en ledig rumskod. Försök igen.'};
-  }
-
-  async function joinRoom(code){
-    code=String(code||'').trim().toUpperCase();
-    const roomRef=ref(realtimeDb,`${ROOMS_PATH}/${code}`);
-    try{
-      const snap=await get(roomRef);
-      if(!snap.exists()) return {ok:false,error:'RUMMET FINNS INTE.'};
-      const player2Ref=ref(realtimeDb,`${ROOMS_PATH}/${code}/player2`);
-      const tx=await runTransaction(player2Ref,current=> current === true ? undefined : true);
-      if(!tx.committed) return {ok:false,error:'RUMMET ÄR REDAN FULLT.'};
-      await update(roomRef,{
-        'players/player2/connected':true
-      });
-      const presenceRef=ref(realtimeDb,`${ROOMS_PATH}/${code}/players/player2/connected`);
-      await onDisconnect(presenceRef).set(false);
-      return {ok:true,code};
-    }catch(err){
-      console.error('WiiKubbOnline: kunde inte gå med i rum',err);
-      return {ok:false,error:'Kunde inte ansluta till rummet.'};
-    }
-  }
-
-  async function setRoomState(code,state){
-    if(!code || !state) return false;
-    try{
-      await update(ref(realtimeDb,`${ROOMS_PATH}/${code}`),{
-        version:Number(state.version)||Date.now(),
-        gameMode:'classic',
-        round:Number(state.round)||1,
-        phase:state.phase==='king'?'king':'kubbs',
-        batons:Math.max(0,Number(state.batons)||0),
-        kubbs:Array.isArray(state.kubbs)?state.kubbs:[],
-        fallenPieces:Array.isArray(state.fallenPieces)?state.fallenPieces:[],
-        currentTurn:Number(state.currentTurn)===2?2:1,
-        status:String(state.status||'waiting'),
-        lastThrow:state.lastThrow||null,
-        message:String(state.message||'')
-      });
-      return true;
-    }catch(err){
-      console.error('WiiKubbOnline: kunde inte skriva rum',err);
-      return false;
-    }
-  }
-
-  function listenRoom(code,callback){
-    const roomRef=ref(realtimeDb,`${ROOMS_PATH}/${code}`);
-    const handler=snap=>callback(snap.exists()?snap.val():null);
-    return onValue(roomRef,handler,err=>{
-      console.error('WiiKubbOnline: Realtime Database-fel',err);
-      callback(null);
-    });
-  }
-
-  window.WiiKubbOnline = {
-    createRoom, joinRoom, setRoomState, listenRoom, ready:true
-  };
-  window.dispatchEvent(new Event('wiikubb-online-ready'));
 
   window.WiiKubbCloud = { submitScore, fetchTopScores, ready: true };
   window.dispatchEvent(new Event('wiikubb-cloud-ready'));
