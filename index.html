@@ -104,6 +104,44 @@
   .hint{
     text-align:center; color:#4b4a68; font-size:10px; margin-top:14px; letter-spacing:.5px;
   }
+
+  /* ---- vy-växlare ---- */
+  .view-toggle{
+    position:fixed; top:14px; right:14px; z-index:50;
+    width:34px; height:34px; border-radius:50%;
+    border:none; cursor:pointer;
+    background:rgba(20,20,30,.55);
+    color:#e7e6f5;
+    font-size:15px; line-height:1;
+    display:flex; align-items:center; justify-content:center;
+    box-shadow:0 2px 6px rgba(0,0,0,.4);
+    -webkit-tap-highlight-color:transparent;
+  }
+  .view-toggle:active{ transform:scale(.92); }
+
+  /* ---- helskärmsläge: bara skärmen syns ---- */
+  body.fullscreen-mode{ background:#000; }
+  body.fullscreen-mode .device{
+    width:100vw; max-width:100vw; height:100vh;
+    padding:0; margin:0; border-radius:0; box-shadow:none;
+    background:transparent;
+    display:flex; align-items:center; justify-content:center;
+  }
+  body.fullscreen-mode .device > *:not(.screen-frame){ display:none; }
+  body.fullscreen-mode .screen-frame{
+    width:100vw; height:100vh; max-width:100vw; max-height:100vh;
+    padding:0; border-radius:0; box-shadow:none;
+    background:#000;
+    display:flex; align-items:center; justify-content:center;
+  }
+  body.fullscreen-mode .screen-label{ display:none; }
+  body.fullscreen-mode #gameCanvas{
+    width:100vw; height:100vh;
+    max-width:100vw; max-height:100vh;
+    object-fit:contain;
+    border-radius:0;
+    background:#9bbc0f;
+  }
 </style>
 </head>
 <body>
@@ -140,6 +178,8 @@
 
   <div class="hint">A / MELLANSLAG = LÅS · B = LJUD PÅ/AV</div>
 </div>
+
+<button id="viewToggle" class="view-toggle" title="Växla vy (F)" aria-label="Växla vy">⛶</button>
 
 <script>
 (function(){
@@ -348,8 +388,9 @@
       requestAnimationFrame(this.loop);
     }
 
-    cycleMode(){
-      this.menuIndex = (this.menuIndex+1) % MODES.length;
+    cycleMode(dir){
+      dir = dir || 1;
+      this.menuIndex = (this.menuIndex + dir + MODES.length) % MODES.length;
       this.audio.sfxLock();
     }
 
@@ -835,7 +876,8 @@
         if(e.code === 'Escape'){ e.preventDefault(); this.requestQuitConfirm(); }
         if(this.state === 'menu' && (e.code==='ArrowUp'||e.code==='ArrowDown'||e.code==='ArrowLeft'||e.code==='ArrowRight')){
           e.preventDefault();
-          this.cycleMode();
+          const dir = (e.code==='ArrowUp'||e.code==='ArrowLeft') ? -1 : 1;
+          this.cycleMode(dir);
         }
         if(this.state === 'highscoreList' && (e.code==='ArrowLeft'||e.code==='ArrowRight')){
           e.preventDefault();
@@ -1797,7 +1839,43 @@
     }
   }
 
-  new KubbGame(document.getElementById('gameCanvas'));
+  const kubbGame = new KubbGame(document.getElementById('gameCanvas'));
+
+  // ---- vy-växlare: "DEVICE" (original med Game Boy-skal) / "FULLSCREEN" (bara skärmen) ----
+  (function(){
+    const VIEW_KEY = 'wiiKubbViewMode';
+    const btn = document.getElementById('viewToggle');
+    const canvas = document.getElementById('gameCanvas');
+
+    function apply(mode){
+      document.body.classList.toggle('fullscreen-mode', mode === 'fullscreen');
+      try{ localStorage.setItem(VIEW_KEY, mode); }catch(e){}
+      if(btn){
+        btn.title = mode === 'fullscreen' ? 'Visa Game Boy (F)' : 'Helskärm, bara skärmen (F)';
+      }
+    }
+    function toggle(){
+      const next = document.body.classList.contains('fullscreen-mode') ? 'device' : 'fullscreen';
+      apply(next);
+    }
+
+    let saved = 'device';
+    try{ saved = localStorage.getItem(VIEW_KEY) || 'device'; }catch(e){}
+    apply(saved);
+
+    if(btn) btn.addEventListener('click', toggle);
+    window.addEventListener('keydown', (e)=>{
+      if(e.key === 'f' || e.key === 'F'){ e.preventDefault(); toggle(); }
+    });
+
+    // I helskärmsläget finns inga knappar synliga, så ett tryck/klick på
+    // själva skärmen fungerar som A-knappen (samma som mellanslag).
+    if(canvas){
+      canvas.addEventListener('click', ()=>{
+        if(document.body.classList.contains('fullscreen-mode')) kubbGame.actionPress();
+      });
+    }
+  })();
 })();
 </script>
 
