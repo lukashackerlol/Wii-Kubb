@@ -2591,8 +2591,16 @@
     const roomRef = ref(rtdb, 'rooms/'+code);
     try{
       const result = await runTransaction(roomRef, (room)=>{
-        if(room === null) return undefined;       // avbryt -> rummet finns inte
-        if(room.player2Present) return undefined; // avbryt -> redan fullt
+        // VIKTIGT: update-funktionen kan anropas första gången med room===null
+        // enbart för att klienten ännu inte hunnit hämta den riktiga datan från
+        // servern - det betyder INTE nödvändigtvis att rummet saknas. Om vi
+        // avbryter direkt här (return undefined) hinner Firebase aldrig
+        // kontrollera med servern, och ett rum som faktiskt finns (och inte
+        // är fullt) skulle felaktigt rapporteras som "fullt". Genom att
+        // returnera null (inte undefined) låter vi transaktionen synka med
+        // servern och köra om funktionen med den riktiga datan om sådan finns.
+        if(room === null) return null;
+        if(room.player2Present) return undefined; // riktig data, redan upptaget -> avbryt
         room.player2Present = true;
         room.player2Connected = true;
         room.status = 'playing';
@@ -2600,8 +2608,14 @@
         return room;
       });
       if(!result.committed){
-        const snap = await get(roomRef);
-        return snap.exists() ? 'full' : 'notfound';
+        // Enda sättet detta händer nu (givet ovanstående) är att den riktiga
+        // datan visade att player2Present redan var true.
+        return 'full';
+      }
+      if(result.snapshot.val() === null){
+        // Transaktionen gick igenom och bekräftade med servern att rummet
+        // verkligen inte finns (skrev null -> no-op).
+        return 'notfound';
       }
       onDisconnect(ref(rtdb, 'rooms/'+code+'/player2Connected')).set(false);
       subscribeRoom(code, onUpdate);
