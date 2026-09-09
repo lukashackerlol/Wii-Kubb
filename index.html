@@ -154,6 +154,21 @@
   const KING_HIT_TOL = 9; // hur nära Kungens x-position ett kast måste landa för att räknas som en träff på honom
   const HORIZON_Y = 80;   // marken i frontalvyn för kunga-kastet
   const KUBB_XS = [30,55,80,105,130];
+  // Fiskmåsen som flyger förbi under själva spelet (inte att förväxla med
+  // "överkraft"-sekvensens fiskmås) - dyker upp först efter runda 3 och kan
+  // man kastar illa nog kan man råka träffa den.
+  const SEAGULL_FIRST_ROUND = 4;                    // "efter runda 3" = från och med runda 4
+  const SEAGULL_FLIGHT_MIN = 2.4, SEAGULL_FLIGHT_MAX = 3.6; // hur lång tid en överflygning tar
+  const SEAGULL_GAP_MIN = 4, SEAGULL_GAP_MAX = 8;    // paus mellan varje överflygning
+  // Måsen flyger olika långt bort från spelaren - antingen långt bort ovanför
+  // klossraden (bortom Kungen, sett från spelarens håll) eller nära inpå
+  // spelaren mellan Kungen och honom själv. Två separata höjdband, ett på
+  // vardera sidan av Kungens y-position (KING_Y), så avståndet varierar
+  // tydligt från kast till kast.
+  const SEAGULL_Y_FAR_MIN = 8,   SEAGULL_Y_FAR_MAX = 26;   // bortom klossarna, långt bort
+  const SEAGULL_Y_NEAR_MIN = 102, SEAGULL_Y_NEAR_MAX = 124; // mellan Kungen och spelaren, nära
+  const SEAGULL_HIT_TOL = 9;                         // hur nära pinnen måste passera för att räknas som träff
+  const SEAGULL_HIT_DUR = 1.1;                       // hur länge träff-animationen visas
   const OVER_CLOSEUP_DUR = 0.7, OVER_IMPACT_DUR = 0.35, OVER_REACT_DUR = 1.3;
   // "Jorden runt"-varianten är en längre, tydligare specialsekvens med ett eget
   // tajmings-moment: spelaren måste trycka A i rätt ögonblick för att fånga
@@ -285,7 +300,7 @@
       this.ctx.scale(3,3);
       this.audio = new AudioEngine();
 
-      this.state = 'menu'; // menu, aim, power, throw, overpower, roundclear, gameover, nameentry, highscoreList, confirmQuit
+      this.state = 'menu'; // menu, aim, power, throw, overpower, kingfall, seagullhit, roundclear, gameover, nameentry, highscoreList, confirmQuit
       this.gameMode = 'classic'; // 'classic' | 'timeattack'
       this.menuIndex = 0;
       this.timeLeft = 0;
@@ -316,6 +331,10 @@
       this.throwAnim = null;
       this.overAnim = null; // {t, rot, phase} - "överkraft"-sekvensen (anime-cutscene)
       this.fallenPieces = []; // {x,y,type:'kubb'|'king'}
+      this.kingFallAnim = null; // {t,dur,x,y,impactDone} - animationen när Kungen träffas och ramlar
+      this.seagull = null; // {t,dur,y,dir} - fiskmåsen som flyger över skärmen, eller null om ingen är i luften
+      this.seagullCooldown = SEAGULL_GAP_MIN + Math.random()*(SEAGULL_GAP_MAX-SEAGULL_GAP_MIN);
+      this.seagullHitAnim = null; // {t,dur,x,y} - spelas upp när man råkar träffa fiskmåsen
 
       this.msgClock = 0;
       this.last = performance.now();
@@ -345,6 +364,10 @@
       this.batons = 8;
       this.phase = 'kubbs';
       this.fallenPieces = [];
+      this.kingFallAnim = null;
+      this.seagull = null;
+      this.seagullCooldown = SEAGULL_GAP_MIN + Math.random()*(SEAGULL_GAP_MAX-SEAGULL_GAP_MIN);
+      this.seagullHitAnim = null;
       // Sikte och kraftmätare accelererar för varje runda för en tydligare
       // svårighetskurva.
       this.aimSpeed = 2.6 + (this.round-1)*0.2;
@@ -637,16 +660,24 @@
         this.audio.sfxWin(); this.flash = 0.6;
         this.fallenPieces.push({x:KING_X, y:KING_Y, type:'king'});
         this.message = 'KUNGEN FÖLL!'; this.msgTimer = 1.4;
+        // Kungen tippar inte omkull direkt - en kort animation spelas upp
+        // (se updateKingFall) innan rundan räknas som klarad.
+        this.kingFallAnim = {t:0, dur:0.8, x:KING_X, y:KING_Y, impactDone:false, onDone:'roundclear'};
       }
 
       // Kungen står mellan spelaren och klossarna. Kastar man för kort (når
       // inte fram till klossarnas yta) OCH kastet ligger i linje med Kungen,
-      // är det Game Over direkt.
+      // råkar man träffa honom av misstag - det är Game Over, men först får
+      // samma fall-animation som vid en avsiktlig träff spelas upp.
       if(!hit && this.phase === 'kubbs' && y1 >= KUBB_Y+18 && Math.abs(x1-KING_X) < KING_HIT_TOL){
+        hit = true;
         this.audio.sfxOver();
+        this.fallenPieces.push({x:KING_X, y:KING_Y, type:'king'});
         this.message = 'DU TRÄFFADE KUNGEN – GAME OVER!';
         this.msgTimer = 1.6;
-        this.endGame();
+        this.kingFallAnim = {t:0, dur:0.8, x:KING_X, y:KING_Y, impactDone:false, onDone:'gameover'};
+        this.throwAnim = null;
+        this.state = 'kingfall';
         return;
       }
 
@@ -671,7 +702,7 @@
 
       if(this.phase === 'king'){
         if(hit){
-          this.state = 'roundclear';
+          this.state = 'kingfall';
           this.throwAnim = null;
         } else {
           this.audio.sfxOver();
@@ -689,6 +720,96 @@
       this.state = 'aim';
       this.aimT = Math.random()*10;
       this.throwAnim = null;
+    }
+
+    // ---- fiskmåsen som flyger förbi under spelet ----
+    seagullActive(){
+      // Fiskmåsen finns bara med i den vanliga klosskastningen (topdown-vyn),
+      // inte i frontalvyn mot Kungen, och först från och med runda 4.
+      return this.round >= SEAGULL_FIRST_ROUND && this.phase === 'kubbs';
+    }
+    seagullPos(){
+      const s = this.seagull;
+      if(!s) return null;
+      const p = Math.min(1, s.t/s.dur);
+      const x0 = s.dir===1 ? -14 : W+14;
+      const x1 = s.dir===1 ? W+14 : -14;
+      return { x: x0 + (x1-x0)*p, y: s.y, dir: s.dir };
+    }
+    updateSeagull(dt){
+      if(!this.seagullActive()){ this.seagull = null; return; }
+      if(this.seagull){
+        this.seagull.t += dt;
+        if(this.seagull.t >= this.seagull.dur){
+          this.seagull = null;
+          this.seagullCooldown = SEAGULL_GAP_MIN + Math.random()*(SEAGULL_GAP_MAX-SEAGULL_GAP_MIN);
+        }
+      } else {
+        this.seagullCooldown -= dt;
+        if(this.seagullCooldown <= 0){
+          // Slumpa vilket håll av Kungen måsen flyger denna gång - långt
+          // bort ovanför klossarna, eller nära inpå spelaren.
+          const far = Math.random() < 0.5;
+          const yMin = far ? SEAGULL_Y_FAR_MIN : SEAGULL_Y_NEAR_MIN;
+          const yMax = far ? SEAGULL_Y_FAR_MAX : SEAGULL_Y_NEAR_MAX;
+          this.seagull = {
+            t:0,
+            dur: SEAGULL_FLIGHT_MIN + Math.random()*(SEAGULL_FLIGHT_MAX-SEAGULL_FLIGHT_MIN),
+            y: yMin + Math.random()*(yMax-yMin),
+            dir: Math.random() < 0.5 ? 1 : -1
+          };
+        }
+      }
+    }
+    // Kollar varje frame under själva kast-animationen om pinnen (som rör sig
+    // i en enkel kastbåge, samma formel som i drawThrowAnim) råkar passera
+    // tillräckligt nära fiskmåsen just då - i så fall avbryts det vanliga
+    // kastet och träff-sekvensen tar över istället.
+    checkSeagullThrowCollision(){
+      if(!this.throwAnim || this.throwAnim.birdHit) return;
+      const pos = this.seagullPos();
+      if(!pos) return;
+      const a = this.throwAnim;
+      const tt = Math.min(1, a.t/a.dur);
+      const x = a.x0 + (a.x1-a.x0)*tt;
+      const yLinear = a.y0 + (a.y1-a.y0)*tt;
+      const arc = Math.sin(Math.PI*tt) * 14;
+      const y = yLinear - arc;
+      if(Math.hypot(x-pos.x, y-pos.y) < SEAGULL_HIT_TOL){
+        a.birdHit = true;
+        this.triggerSeagullHit(pos.x, pos.y);
+      }
+    }
+    triggerSeagullHit(x,y){
+      this.audio.sfxHit(); this.shake = 8;
+      this.message = 'TRÄFFADE EN FISKMÅS!';
+      this.msgTimer = 1.3;
+      this.seagullHitAnim = {t:0, dur:SEAGULL_HIT_DUR, x, y, dir:this.seagull ? this.seagull.dir : 1};
+      this.seagull = null;
+      this.throwAnim = null;
+      this.state = 'seagullhit';
+    }
+    updateSeagullHit(dt){
+      const a = this.seagullHitAnim;
+      if(!a) return;
+      a.t += dt;
+      if(a.t >= a.dur){
+        this.seagullHitAnim = null;
+        this.finishSeagullHit();
+      }
+    }
+    // Räknas som ett förlorat kast - fiskmåsen kom i vägen innan pinnen hann
+    // fram till klossarna.
+    finishSeagullHit(){
+      this.batons--;
+      this.seagullCooldown = SEAGULL_GAP_MIN + Math.random()*(SEAGULL_GAP_MAX-SEAGULL_GAP_MIN);
+      if(this.batons <= 0){
+        this.audio.sfxOver();
+        this.endGame();
+        return;
+      }
+      this.state = 'aim';
+      this.aimT = Math.random()*10;
     }
 
     // ---- input-bindningar ----
@@ -774,7 +895,41 @@
         this.rect(x-6, y+3, 12, 4, PAL.dark);
       }
     }
-    drawKing(x,y,fallen){
+    // fallProgress (0-1) är valfri: om satt ritas kungen mitt i en tippande
+    // fall-animation istället för i sitt stående eller helt fallna läge.
+    drawKing(x,y,fallen,fallProgress){
+      if(fallProgress !== undefined && fallProgress !== null){
+        const ctx = this.ctx;
+        const p = Math.min(1, Math.max(0, fallProgress));
+        // tippar från stående (0) till liggande (~90°) - en aning "overshoot"
+        // i slutet ger en liten studs-känsla när han slår i marken.
+        const settle = p < 0.85 ? p/0.85 : 1;
+        const angle = (Math.PI/2) * settle + Math.sin(Math.min(1,p*1.3)*Math.PI) * (p>0.85?0.06:0);
+        const groundY = y + 11; // ungefär var kungens fötter står
+        ctx.save();
+        ctx.translate(x, groundY);
+        ctx.rotate(angle);
+        ctx.translate(-x, -groundY);
+        this.rect(x-5, y-11, 10, 22, PAL.darkest);
+        this.rect(x-4, y-10, 8, 20, PAL.dark);
+        this.rect(x-6, y-15, 12, 4, PAL.darkest);
+        this.rect(x-6, y-18, 2, 4, PAL.darkest);
+        this.rect(x-1, y-19, 2, 5, PAL.darkest);
+        this.rect(x+4, y-18, 2, 4, PAL.darkest);
+        this.rect(x-4, y-3, 8, 1, PAL.darkest);
+        ctx.restore();
+        // litet dammoln som poffar upp precis när han landar
+        if(p > 0.7){
+          const dustA = 1 - (p-0.7)/0.3;
+          ctx.save();
+          ctx.globalAlpha = Math.max(0, dustA) * 0.7;
+          this.rect(x-15, groundY-2, 6, 3, PAL.dark);
+          this.rect(x+9, groundY-2, 6, 3, PAL.dark);
+          this.rect(x-3, groundY-5, 6, 3, PAL.dark);
+          ctx.restore();
+        }
+        return;
+      }
       if(!fallen){
         this.rect(x-5, y-11, 10, 22, PAL.darkest);
         this.rect(x-4, y-10, 8, 20, PAL.dark);
@@ -878,10 +1033,18 @@
       this.kubbs.forEach(k=>{ if(k.standing) this.drawKubb(k.x, KUBB_Y, true); });
       this.fallenPieces.forEach(p=>{
         if(p.type==='kubb') this.drawKubb(p.x,p.y,false);
-        else this.drawKing(p.x,p.y,true);
+        // medan fall-animationen spelas ritar vi kungen separat nedan istället
+        else if(!this.kingFallAnim) this.drawKing(p.x,p.y,true);
       });
-      const kingFallen = this.fallenPieces.some(p=>p.type==='king');
-      if(!kingFallen) this.drawKing(KING_X, KING_Y, false);
+      if(this.kingFallAnim){
+        const a = this.kingFallAnim;
+        this.drawKing(a.x, a.y, false, a.t/a.dur);
+      } else {
+        const kingFallen = this.fallenPieces.some(p=>p.type==='king');
+        if(!kingFallen) this.drawKing(KING_X, KING_Y, false);
+      }
+      const gullPos = this.seagullPos();
+      if(gullPos) this.drawSeagull(gullPos.x, gullPos.y, false, gullPos.dir);
       this.drawThrower();
     }
     drawSceneFrontal(){
@@ -1244,10 +1407,11 @@
       ctx.globalAlpha = 1;
       ctx.restore();
     }
-    drawSeagull(x, y, dizzy){
+    drawSeagull(x, y, dizzy, dir){
       const ctx = this.ctx;
       ctx.save();
       ctx.translate(Math.round(x), Math.round(y));
+      if(dir === -1) ctx.scale(-1,1); // vänd fågeln så näbben pekar åt flygriktningen
       if(dizzy) ctx.rotate(Math.PI*0.92);
       // kropp
       this.rect(-8,-4,16,8, '#f4f4f4');
@@ -1318,6 +1482,59 @@
         this.rect(32,62,96,16, PAL.lightest);
         this.centerText(this.message, 72, PAL.darkest, 8);
       }
+    }
+    // ---- animationen som spelas upp varje gång kungen träffas och ramlar ----
+    updateKingFall(dt){
+      const a = this.kingFallAnim;
+      if(!a) return;
+      a.t += dt;
+      // en kort skärmskakning precis när han slår i marken, inte i samma
+      // ögonblick som träffen registrerades
+      if(!a.impactDone && a.t >= a.dur*0.78){
+        a.impactDone = true;
+        this.shake = Math.max(this.shake, 7);
+      }
+      if(a.t >= a.dur){
+        const onDone = a.onDone;
+        this.kingFallAnim = null;
+        if(onDone === 'gameover') this.endGame();
+        else this.state = 'roundclear';
+      }
+    }
+    drawKingFallScene(){
+      this.drawScene();
+      this.drawHUD();
+      this.drawMessage();
+    }
+    // ---- animationen som spelas upp när man råkar träffa fiskmåsen mitt i en runda ----
+    drawSeagullHitScene(){
+      this.drawScene();
+      const a = this.seagullHitAnim;
+      if(a){
+        const ctx = this.ctx;
+        const p = Math.min(1, a.t/a.dur);
+        const fallY = a.y + p*34; // måsen daskar snurrigt nedåt
+        this.drawSeagull(a.x, fallY, true, a.dir);
+        // yrande stjärnor kring huvudet
+        ctx.save();
+        ctx.translate(a.x, fallY-12);
+        for(let i=0;i<3;i++){
+          const ang = a.t*6 + i*(Math.PI*2/3);
+          ctx.save();
+          ctx.translate(Math.cos(ang)*9, Math.sin(ang)*9*0.5);
+          ctx.fillStyle = PAL.darkest;
+          this.drawStar(0,0,3,1.5,5);
+          ctx.restore();
+        }
+        ctx.restore();
+        // lösa fjädrar som singlar ner
+        for(let i=0;i<3;i++){
+          const drip = (a.t*36 + i*15) % 30;
+          this.rect(a.x-6+i*6, a.y+drip, 2,3, i%2===0 ? PAL.darkest : PAL.dark);
+        }
+      }
+      this.drawHUD();
+      this.drawMessage();
     }
     drawRoundClear(){
       this.drawScene();
@@ -1502,6 +1719,15 @@
         ctx.rotate(Math.PI);
       }
 
+      // Fiskmåsen flyger fritt medan man siktar och väljer kraft - det är i
+      // exakta ögonblicket man låser kraften (och kastet avfyras) som
+      // hennes position "fryses" för träff-kollisionen. Det gör att det är
+      // TIMINGEN på kraft-tryckningen som avgör om man råkar sikta rätt in i
+      // henne, inte vad hon sedan hinner göra under själva kastanimationen.
+      if(this.state === 'aim' || this.state === 'power'){
+        this.updateSeagull(dt);
+      }
+
       if(this.state === 'menu'){
         this.drawMenu(this.msgClock);
       } else if(this.state === 'aim'){
@@ -1517,11 +1743,24 @@
       } else if(this.state === 'throw'){
         this.throwAnim.t += dt;
         this.throwAnim.rot += dt*30;
-        this.drawThrowAnim();
-        if(this.throwAnim.t >= this.throwAnim.dur) this.resolveThrow();
+        this.checkSeagullThrowCollision();
+        if(this.state === 'throw'){
+          this.drawThrowAnim();
+          if(this.throwAnim.t >= this.throwAnim.dur) this.resolveThrow();
+        } else if(this.state === 'seagullhit'){
+          // Kastet träffade fiskmåsen just denna frame - rita träff-scenen
+          // direkt istället för det vanliga kastet.
+          this.drawSeagullHitScene();
+        }
+      } else if(this.state === 'seagullhit'){
+        this.updateSeagullHit(dt);
+        if(this.state === 'seagullhit') this.drawSeagullHitScene(); // rita om inte animationen redan avslutats denna frame
       } else if(this.state === 'overpower'){
         this.updateOverpower(dt);
         if(this.state === 'overpower') this.drawOverpower(); // rita om inte sekvensen redan avslutats denna frame
+      } else if(this.state === 'kingfall'){
+        this.updateKingFall(dt);
+        if(this.state === 'kingfall') this.drawKingFallScene(); // rita om inte animationen redan avslutats denna frame
       } else if(this.state === 'roundclear'){
         this.drawRoundClear();
       } else if(this.state === 'gameover'){
