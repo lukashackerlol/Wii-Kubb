@@ -386,6 +386,7 @@
       this.roomJoinStatus = '';  // 'notfound' | 'full' | 'error' - visas på felskärmen
       this.roomBusyText = '';    // text som visas medan ett nätverksanrop pågår
       this.lastPlayedThrowTs = 0; // undviker att spela upp motståndarens senaste kast två gånger
+      this.lastSeenMessageAt = 0; // undviker att visa samma meddelande om och om igen
       // Bekräftelsedialog för MENY-knappen - avbryter/pausar rundan tills man svarar.
       this.previousState = null;
       this.confirmIndex = 0; // 0 = NEJ (fortsätt), 1 = JA (avsluta)
@@ -610,6 +611,7 @@
       this.localRole = 'player1';
       this.matchType = 'online';
       this.lastPlayedThrowTs = 0;
+      this.lastSeenMessageAt = 0;
       this.state = 'onlineLobby';
     }
     async joinOnlineRoom(){
@@ -633,6 +635,7 @@
       this.localRole = 'player2';
       this.matchType = 'online';
       this.lastPlayedThrowTs = 0;
+      this.lastSeenMessageAt = 0;
       this.state = 'onlineWait'; // player1 alltid först - onRoomUpdate rättar till detta om det redan blivit vår tur
     }
     roomEntryChangeLetter(dir){
@@ -650,22 +653,45 @@
     // Anropas varje gång rummet ändras i Realtime Database (av endera spelaren).
     // Detta är den enda platsen som sätter this.state medan en online-match pågår -
     // klienten "följer" alltså alltid det senaste den delade databasen säger.
+    // Anropas varje gång rummet ändras i Realtime Database (av endera spelaren).
+    // Detta är den enda platsen som sätter this.state medan en online-match pågår -
+    // klienten "följer" alltså alltid det senaste den delade databasen säger.
+    //
+    // Spelmodellen är en förenklad riktig kubb: varje spelare har EN egen rad
+    // med 5 kubbar (team1Kubbs/team2Kubbs). Man kastar aldrig mot sina egna -
+    // man kastar mot MOTSTÅNDARENS rad. Vem som just nu är under attack
+    // (vilken rad som visas/siktas mot) avgörs alltså av vems tur det är,
+    // inte av vem jag själv är. "Fasen" (kubbar eller kungen) är inte ett
+    // eget fält i databasen - den räknas alltid fram ur om anfallarens
+    // målrad är helt fälld ännu, så den kan aldrig hamna i otakt.
     onRoomUpdate(data){
       if(!data) return; // rummet borttaget eller ännu inte skrivet
       this.room = data;
-      // Spegla brädet in i samma fält som det lokala spelet redan ritar ur
-      // (drawScene/drawHUD/drawKubb m.fl.) - ingen ny ritkod behövs för själva planen.
-      this.kubbs = KUBB_XS.map((x,i)=>({x, standing: !!(data.kubbs && data.kubbs[i])}));
-      this.phase = data.phase || 'kubbs';
-      this.batons = typeof data.batonsLeft === 'number' ? data.batonsLeft : 8;
+      const attacker = data.turn || 'player1';
+      const targetKubbs = attacker === 'player1'
+        ? (data.team2Kubbs || [true,true,true,true,true])
+        : (data.team1Kubbs || [true,true,true,true,true]);
+      this.kubbs = KUBB_XS.map((x,i)=>({x, standing: !!targetKubbs[i]}));
+      this.phase = targetKubbs.every(k=>!k) ? 'king' : 'kubbs';
+      this.batons = typeof data.throwsLeft === 'number' ? data.throwsLeft : 2;
       this.fallenPieces = this.kubbs.filter(k=>!k.standing).map(k=>({x:k.x, y:KUBB_Y, type:'kubb'}));
-      if(data.kingFallen) this.fallenPieces.push({x:KING_X, y:KING_Y, type:'king'});
+      // Kungen ritas alltid stående i online-läget - se resolveOnlineThrow för
+      // varför (spelet hoppar direkt till nästa omgång/matchresultat samma
+      // skrivning som en kungeträff, så det finns aldrig ett ögonblick att
+      // visa honom liggande i, bara meddelandebanderollen).
 
       // Spela upp motståndarens senaste kast en gång, som en kosmetisk
       // "spökbåge" - påverkar inget tillstånd, bara ren återgivning.
       if(data.lastThrow && data.lastThrow.by && data.lastThrow.by !== this.localRole && data.lastThrow.ts !== this.lastPlayedThrowTs){
         this.lastPlayedThrowTs = data.lastThrow.ts;
         this.throwAnim = { t:0, dur:0.55, x0:80, y0:BASE_Y, x1:data.lastThrow.x, y1:data.lastThrow.y, rot:0, ghost:true };
+      }
+      // Visa senaste meddelandet (träff/miss/omgångsresultat) på BÅDA
+      // klienterna, inte bara hos den som kastade.
+      if(data.messageAt && data.messageAt !== this.lastSeenMessageAt){
+        this.lastSeenMessageAt = data.messageAt;
+        this.message = data.message || '';
+        this.msgTimer = 1.6;
       }
 
       if(data.status === 'finished'){
@@ -674,12 +700,11 @@
       }
       if(data.status !== 'playing') return; // fortfarande i väntrummet
 
-      const myTurn = data.turn === this.localRole;
+      const myTurn = attacker === this.localRole;
       if(myTurn && this.state !== 'aim' && this.state !== 'power' && this.state !== 'throw'){
         this.state = 'aim';
         this.aimT = Math.random()*10;
         this.aimSpeed = ONLINE_AIM_SPEED; this.powerSpeed = ONLINE_POWER_SPEED;
-        this.message = 'DIN TUR!'; this.msgTimer = 1.0;
       } else if(!myTurn && this.state !== 'throw'){
         this.state = 'onlineWait';
       }
@@ -688,88 +713,128 @@
     // och skriver hela resultatet till Realtime Database i en enda uppdatering.
     // Motparten (och en själv, via samma lyssnare) får sedan tillbaka exakt
     // samma resultat genom onRoomUpdate - databasen är alltid facit.
+    //
+    // Regler (förenklad riktig kubb): man kastar 2 pinnar per tur mot
+    // motståndarens rad. När hela den raden är fälld går kommande kast (även
+    // resten av samma tur) mot kungen istället. Den som fäller kungen vinner
+    // OMGÅNGEN; den som råkar slå kungen innan raden är tom förlorar den
+    // direkt (samma foul-regel som i lokalt läge). Bäst av 3 omgångar vinner
+    // MATCHEN - vid en omgångsvinst som inte avgör matchen nollställs båda
+    // radernas kubbar och förloraren av omgången börjar nästa.
     resolveOnlineThrow(){
       const {x1,y1} = this.throwAnim;
       const room = this.room || {};
-      let kubbs = (room.kubbs || [true,true,true,true,true]).slice();
-      let phase = room.phase || 'kubbs';
-      let kingFallen = !!room.kingFallen;
-      let batonsLeft = (typeof room.batonsLeft === 'number' ? room.batonsLeft : 8) - 1;
-      let hit = false, message = '', winner = null, status = 'playing';
-      const meLabel = this.localRole === 'player1' ? 'SPELARE 1' : 'SPELARE 2';
+      const attacker = room.turn || 'player1';
+      const defender = attacker === 'player1' ? 'player2' : 'player1';
+      const team1Kubbs = (room.team1Kubbs || [true,true,true,true,true]).slice();
+      const team2Kubbs = (room.team2Kubbs || [true,true,true,true,true]).slice();
+      const targetKubbs = attacker === 'player1' ? team2Kubbs : team1Kubbs; // referens - muterar rätt array på plats
+      const phase = targetKubbs.every(k=>!k) ? 'king' : 'kubbs';
+
+      let hit = false, foul = false, gameWinner = null;
+      const attackerLabel = attacker === 'player1' ? 'SPELARE 1' : 'SPELARE 2';
 
       if(phase === 'kubbs' && y1 > 26 && y1 < 58){
         let best = -1, bestD = 999;
         KUBB_XS.forEach((kx,i)=>{
-          if(!kubbs[i]) return;
+          if(!targetKubbs[i]) return;
           const d = Math.abs(kx-x1);
           if(d < bestD){ bestD = d; best = i; }
         });
         if(best >= 0 && bestD < 9){
-          kubbs[best] = false;
+          targetKubbs[best] = false;
           hit = true;
-          this.audio.sfxHit(); this.shake = 6;
-          message = meLabel+' TRÄFFADE!';
         }
       } else if(phase === 'king' && y1 < 32 && Math.abs(x1-KING_X) < 9){
-        hit = true; kingFallen = true;
-        this.audio.sfxWin(); this.flash = 0.6;
-        message = meLabel+' FÄLLDE KUNGEN!';
-        winner = this.localRole;
-        status = 'finished';
+        hit = true;
+        gameWinner = attacker;
       }
 
-      // Träffar man Kungen av misstag under klossfasen förlorar man direkt,
-      // precis som i lokalt läge.
+      // Slår man kungen av misstag innan raden är tom förlorar man omgången
+      // direkt, precis som i lokalt läge.
       if(!hit && phase === 'kubbs' && y1 >= KUBB_Y+18 && Math.abs(x1-KING_X) < KING_HIT_TOL){
-        hit = true; kingFallen = true;
-        this.audio.sfxOver();
-        message = meLabel+' TRÄFFADE KUNGEN AV MISSTAG!';
-        winner = this.localRole === 'player1' ? 'player2' : 'player1';
-        status = 'finished';
+        foul = true;
+        gameWinner = defender;
       }
 
-      if(!hit && status === 'playing'){
-        this.audio.sfxMiss();
-        message = meLabel+' MISSADE';
+      let message, updates;
+      const wins = Object.assign({player1:0, player2:0}, room.wins);
+
+      if(gameWinner){
+        this.audio[gameWinner === this.localRole ? 'sfxWin' : 'sfxOver']();
+        if(gameWinner === this.localRole) this.flash = 0.6; else this.shake = 8;
+        wins[gameWinner] = (wins[gameWinner]||0) + 1;
+        const winnerLabel = gameWinner === 'player1' ? 'SPELARE 1' : 'SPELARE 2';
+        const gameNumber = room.gameNumber || 1;
+        const matchDecided = wins[gameWinner] >= 2;
+        const resultTag = '('+wins.player1+'-'+wins.player2+')';
+
+        if(matchDecided){
+          message = winnerLabel+' VANN MATCHEN '+resultTag+'!';
+          updates = {
+            team1Kubbs, team2Kubbs, wins,
+            status: 'finished', matchWinner: gameWinner,
+            message, messageAt: Date.now(),
+            lastThrow: { x:x1, y:y1, by:this.localRole, ts:Date.now() }
+          };
+        } else {
+          message = (foul ? (attackerLabel+' SLOG KUNGEN AV MISSTAG! ') : (winnerLabel+' FÄLLDE KUNGEN! '))
+            + 'OMGÅNG '+gameNumber+' TILL '+winnerLabel+' '+resultTag;
+          const loser = gameWinner === 'player1' ? 'player2' : 'player1';
+          updates = {
+            team1Kubbs: [true,true,true,true,true],
+            team2Kubbs: [true,true,true,true,true],
+            wins,
+            gameNumber: gameNumber + 1,
+            turn: loser, // förloraren av omgången börjar nästa - liten comeback-chans
+            throwsLeft: 2,
+            status: 'playing',
+            message, messageAt: Date.now(),
+            lastThrow: { x:x1, y:y1, by:this.localRole, ts:Date.now() }
+          };
+        }
+      } else {
+        this.audio[hit ? 'sfxHit' : 'sfxMiss']();
+        if(hit) this.shake = 6;
+        message = attackerLabel + (hit ? ' TRÄFFADE!' : ' MISSADE');
+        const throwsLeft = Math.max(0, (typeof room.throwsLeft === 'number' ? room.throwsLeft : 2) - 1);
+        updates = {
+          team1Kubbs, team2Kubbs,
+          turn: throwsLeft > 0 ? attacker : defender,
+          throwsLeft: throwsLeft > 0 ? throwsLeft : 2,
+          message, messageAt: Date.now(),
+          lastThrow: { x:x1, y:y1, by:this.localRole, ts:Date.now() }
+        };
       }
 
-      if(status === 'playing' && phase === 'kubbs' && kubbs.every(k=>!k)){
-        phase = 'king';
-        message = 'SIKTA PÅ KUNGEN!';
-      }
-
-      if(status === 'playing' && batonsLeft <= 0){
-        status = 'finished';
-        winner = 'draw';
-        message = 'PINNARNA TOG SLUT – OAVGJORT!';
-        this.audio.sfxOver();
-      }
-
-      const nextTurn = status === 'finished' ? room.turn : (this.localRole === 'player1' ? 'player2' : 'player1');
-
-      window.WiiKubbCloud.updateRoom(this.roomCode, {
-        kubbs, phase, kingFallen,
-        batonsLeft: Math.max(0, batonsLeft),
-        turn: nextTurn,
-        message, messageAt: Date.now(),
-        lastThrow: { x:x1, y:y1, by:this.localRole, ts:Date.now() },
-        status, winner: winner || null
-      });
+      window.WiiKubbCloud.updateRoom(this.roomCode, updates);
 
       this.throwAnim = null;
-      this.message = message; this.msgTimer = 1.0;
-      this.state = 'onlineWait'; // onRoomUpdate rättar direkt till 'aim' igen om det ändå blev vår tur
+      this.message = message; this.msgTimer = 1.4;
+      this.lastSeenMessageAt = updates.messageAt;
+      if(updates.status === 'finished'){
+        this.state = 'onlineWait'; // onRoomUpdate växlar direkt till resultatskärmen
+      } else if(updates.turn === this.localRole){
+        // Jag fortsätter direkt (antingen mitt andra kast i samma tur, eller
+        // jag förlorade förra omgången och får börja nästa) - hoppa förbi
+        // väntskärmen så det inte flimrar till.
+        this.state = 'aim';
+        this.aimT = Math.random()*10;
+        this.aimSpeed = ONLINE_AIM_SPEED; this.powerSpeed = ONLINE_POWER_SPEED;
+      } else {
+        this.state = 'onlineWait';
+      }
     }
     // Lämnar en pågående eller väntande online-match och städar upp rummet
-    // så gott det går (tar bort ett övergivet väntrum, eller markerar en
-    // pågående match som avslutad så motståndaren inte blir stående och väntar).
+    // så gott det går (tar bort ett övergivet väntrum, eller markerar hela
+    // matchen som förlorad genom övergivande så motståndaren inte blir
+    // stående och väntar).
     exitOnlineMatch(){
       if(this.roomCode && this.room && window.WiiKubbCloud){
         if(this.room.status === 'playing'){
           const opponent = this.localRole === 'player1' ? 'player2' : 'player1';
           window.WiiKubbCloud.updateRoom(this.roomCode, {
-            status:'finished', winner:opponent,
+            status:'finished', matchWinner:opponent,
             message:'MOTSTÅNDAREN LÄMNADE MATCHEN', messageAt: Date.now()
           });
         } else if(this.room.status === 'waiting' && this.localRole === 'player1'){
@@ -782,6 +847,7 @@
       this.roomCode = null;
       this.localRole = null;
       this.throwAnim = null;
+      this.lastSeenMessageAt = 0;
     }
 
     // ---- MENY-knapp: bekräfta att man vill överge pågående runda/match ----
@@ -1397,7 +1463,11 @@
         ctx.fillText("RUNDA "+this.round, 8, 12);
       }
       ctx.textAlign='right';
-      ctx.fillText("PINNAR "+Math.max(this.batons,0), W-8, 12);
+      if(this.matchType === 'online'){
+        ctx.fillText("KAST KVAR "+Math.max(this.batons,0), W-8, 12);
+      } else {
+        ctx.fillText("PINNAR "+Math.max(this.batons,0), W-8, 12);
+      }
 
       let ix = 8;
       this.kubbs.forEach(k=>{
@@ -1414,6 +1484,14 @@
           ctx.font = "6px monospace";
           ctx.fillText("TID "+Math.ceil(this.timeLeft), W-8, 24);
         }
+      }
+
+      if(this.matchType === 'online' && this.room){
+        const wins = this.room.wins || {player1:0, player2:0};
+        ctx.textAlign='right';
+        ctx.fillStyle = PAL.darkest;
+        ctx.font = "6px monospace";
+        ctx.fillText('STÄLLNING '+(wins.player1||0)+'-'+(wins.player2||0), W-8, 24);
       }
 
       if(this.phase==='king'){
@@ -2227,21 +2305,26 @@
     }
     drawOnlineRoundResult(){
       const ctx = this.ctx;
-      const winner = this.room ? this.room.winner : null;
+      const winner = this.room ? this.room.matchWinner : null;
       const won = winner === this.localRole;
-      const draw = winner === 'draw';
-      this.rect(0,0,W,H, draw ? PAL.darkest : (won ? PAL.lightest : PAL.darkest));
+      const wins = (this.room && this.room.wins) || {player1:0, player2:0};
+      this.rect(0,0,W,H, won ? PAL.lightest : PAL.darkest);
       ctx.textAlign='center';
-      ctx.font = "14px monospace";
-      ctx.fillStyle = draw ? PAL.light : (won ? PAL.darkest : PAL.light);
-      ctx.fillText(draw ? 'OAVGJORT' : (won ? 'DU VANN!' : 'DU FÖRLORADE'), W/2, 60);
-      ctx.font = "6px monospace";
+      ctx.fillStyle = won ? PAL.darkest : PAL.light;
+      ctx.font = "13px monospace";
+      ctx.fillText(won ? 'DU VANN MATCHEN!' : 'DU FÖRLORADE MATCHEN', W/2, 54);
+      ctx.font = "16px monospace";
+      ctx.fillText((wins.player1||0)+' - '+(wins.player2||0), W/2, 76);
+      ctx.font = "5px monospace";
+      ctx.fillText('SPELARE 1 · SPELARE 2', W/2, 86);
       if(this.room && this.room.message){
-        ctx.fillText(this.room.message, W/2, 78);
+        ctx.font = "5px monospace";
+        ctx.fillText(this.room.message, W/2, 100);
       }
       if(Math.floor(this.msgClock*2)%2===0){
+        ctx.fillStyle = won ? PAL.darkest : PAL.light;
         ctx.font = "7px monospace";
-        ctx.fillText("TRYCK START = MENY", W/2, 106);
+        ctx.fillText("TRYCK START = MENY", W/2, 118);
       }
     }
 
@@ -2557,11 +2640,12 @@
           createdAt: Date.now(),
           status: 'waiting',
           turn: 'player1',
-          phase: 'kubbs',
-          kubbs: [true,true,true,true,true],
-          batonsLeft: 8,
-          kingFallen: false,
-          winner: null,
+          team1Kubbs: [true,true,true,true,true],
+          team2Kubbs: [true,true,true,true,true],
+          throwsLeft: 2,
+          gameNumber: 1,
+          wins: { player1: 0, player2: 0 },
+          matchWinner: null,
           message: '',
           messageAt: 0,
           lastThrow: null,
