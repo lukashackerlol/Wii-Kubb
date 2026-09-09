@@ -105,22 +105,25 @@
     text-align:center; color:#4b4a68; font-size:10px; margin-top:14px; letter-spacing:.5px;
   }
 
-  /* ---- vy-växlare, hjälp- och pausknappar (flyter ovanpå, alltid nåbara) ---- */
+  /* ---- vy-växlare, hjälp- och pausknappar (flyter ovanpå, alltid nåbara) ----
+     Samma platta pixelknapp-stil som SELECT/HOME/START på själva enheten
+     (.pill ovan) - inget glas/blur-utseende, det hörde inte hemma här. */
   .corner-btn{
     position:fixed; top:14px; z-index:50;
-    width:34px; height:34px; border-radius:50%;
+    min-width:30px; height:28px; padding:0 8px;
+    border-radius:7px;
     border:none; cursor:pointer;
-    background:rgba(20,20,30,.55);
-    color:#e7e6f5;
-    font-size:15px; line-height:1;
+    background:#38374a; color:#c9c8de;
+    font-family:'Courier New', monospace; font-weight:bold;
+    font-size:13px; line-height:1;
     display:flex; align-items:center; justify-content:center;
-    box-shadow:0 2px 6px rgba(0,0,0,.4);
+    box-shadow:0 3px 0 #23222f;
     -webkit-tap-highlight-color:transparent;
   }
-  .corner-btn:active{ transform:scale(.92); }
+  .corner-btn:active{ transform:translateY(2px); box-shadow:0 1px 0 #23222f; }
   .view-toggle{ right:14px; }
-  .help-toggle{ right:56px; font-weight:bold; font-family:Georgia,serif; }
-  .pause-toggle{ right:98px; font-size:14px; }
+  .help-toggle{ right:52px; }
+  .pause-toggle{ right:90px; font-size:15px; }
   /* Pausknappen ersätter HOME-knappen som göms i helskärmsläge - onödig i
      enhetsvyn där den fysiska HOME-knappen redan syns. */
   body:not(.fullscreen-mode) .pause-toggle{ display:none; }
@@ -247,6 +250,7 @@
       <li><b>Piltangenter</b>Byt läge i menyer, skriv in namn eller rumskod, byt flik i highscore</li>
       <li><b>Esc / ☰</b>Pausa och avbryt en pågående omgång eller match</li>
       <li><b>F / ⛶</b>Växla mellan helskärm och Game Boy-vyn</li>
+      <li><b>🐦 I online-duell</b>Flyger en fiskmås förbi ibland - vem som helst kan trycka A för att försöka fånga den, oavsett vems tur det är. Den som är snabbast får ett extra kast nästa gång det blir hens tur.</li>
     </ul>
     <button id="helpClose">STÄNG</button>
   </div>
@@ -335,6 +339,16 @@
   const ROOM_CHARSET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'; // tecken spelaren kan skriva in
   const ROOM_CODE_LEN = 4;
   const ONLINE_AIM_SPEED = 2.6, ONLINE_POWER_SPEED = 3.6; // fast svårighetsgrad online (ingen runda-eskalering i en duell)
+  // Synkad fiskmås för online-duellen: precis som i lokalt läge, men lättare
+  // - istället för att simulera en fysisk kollision med det kastade spöet
+  // (svårt att hålla i takt mellan två klienter) beräknas ett gemensamt,
+  // deterministiskt flygschema utifrån klockslaget, som båda spelarnas
+  // klienter räknar fram oberoende av varandra (se onlineSeagullPos). Ingen
+  // extra databas-trafik behövs för att bestämma NÄR fågeln dyker upp -
+  // bara för att avgöra vem som hann trycka A först när den väl gör det.
+  const SEAGULL_ONLINE_CYCLE_MS = 13000; // en chans var ~13:e sekund
+  const SEAGULL_ONLINE_FLIGHT_MS = 3200; // hur länge hon syns när hon kommer
+  const SEAGULL_ONLINE_CHANCE = 0.5;     // inte varje cykel - lite oförutsägbart
 
   // 8-bitars bakgrundsmusik (svensk folkmelodi-loop), 0 = paus/tystnad.
   const MUSIC_NOTE_DUR = 0.24;
@@ -856,6 +870,7 @@
             team1Kubbs: [true,true,true,true,true],
             team2Kubbs: [true,true,true,true,true],
             wins,
+            bonusThrows: { player1:0, player2:0 }, // nollställs mellan omgångar - en fångad fiskmås gäller bara i pågående omgång
             gameNumber: gameNumber + 1,
             turn: loser, // förloraren av omgången börjar nästa - liten comeback-chans
             throwsLeft: 2,
@@ -869,10 +884,20 @@
         if(hit) this.shake = 6;
         message = attackerLabel + (hit ? ' TRÄFFADE!' : ' MISSADE');
         const throwsLeft = Math.max(0, (typeof room.throwsLeft === 'number' ? room.throwsLeft : 2) - 1);
+        const nextTurn = throwsLeft > 0 ? attacker : defender;
+        const bonusThrows = Object.assign({player1:0, player2:0}, room.bonusThrows);
+        let nextThrowsLeft;
+        if(throwsLeft > 0){
+          nextThrowsLeft = throwsLeft;
+        } else {
+          // Nästa spelares tur börjar - lägg på en eventuell fångad
+          // fiskmås-bonus och förbruka den.
+          nextThrowsLeft = 2 + (bonusThrows[defender] || 0);
+          bonusThrows[defender] = 0;
+        }
         updates = {
           team1Kubbs, team2Kubbs,
-          turn: throwsLeft > 0 ? attacker : defender,
-          throwsLeft: throwsLeft > 0 ? throwsLeft : 2,
+          turn: nextTurn, throwsLeft: nextThrowsLeft, bonusThrows,
           message, messageAt: Date.now(),
           lastThrow: { x:x1, y:y1, by:this.localRole, ts:Date.now() }
         };
@@ -919,22 +944,71 @@
       this.localRole = null;
       this.throwAnim = null;
       this.lastSeenMessageAt = 0;
+      this.claimedSeagullIds = null;
+    }
+    // Lämnar resultatskärmen mot huvudmenyn (START-knappen där) - städar upp
+    // rummet precis som ett vanligt avslut.
+    exitToMenuFromResult(){
+      this.exitOnlineMatch();
+      this.state = 'menu'; this.menuScreen = 'main'; this.menuIndex = 0;
+    }
+    // Startar en ny match i SAMMA rum med samma två spelare (A-knappen på
+    // resultatskärmen) - ingen ny kod att dela ut. Skriver bara om rummets
+    // matchfält till ett rent utgångsläge; båda klienterna följer sedan med
+    // automatiskt via onRoomUpdate precis som vid en vanlig omgångsväxling.
+    requestRematch(){
+      if(!(this.matchType === 'online' && this.roomCode && window.WiiKubbCloud)) return;
+      this.audio.sfxLock();
+      window.WiiKubbCloud.updateRoom(this.roomCode, {
+        status: 'playing',
+        turn: 'player1',
+        team1Kubbs: [true,true,true,true,true],
+        team2Kubbs: [true,true,true,true,true],
+        throwsLeft: 2,
+        gameNumber: 1,
+        wins: { player1:0, player2:0 },
+        bonusThrows: { player1:0, player2:0 },
+        matchWinner: null,
+        message: 'NY MATCH!',
+        messageAt: Date.now(),
+        lastThrow: null
+      });
+      // this.state uppdateras automatiskt via onRoomUpdate när skrivningen
+      // ekar tillbaka - ingen egen övergångslogik behövs här.
     }
 
     // ---- MENY-knapp: bekräfta att man vill överge pågående runda/match ----
+    // Trycks den mitt i ett aktivt kast/match visas en bekräftelse (man kan
+    // förlora riktiga framsteg). Trycks den från en meny eller mellanskärm
+    // - där det inte finns något att förlora - hoppar den direkt tillbaka
+    // istället för att göra ingenting, så knappen alltid känns som att den
+    // faktiskt gör något oavsett var man befinner sig.
     requestQuitConfirm(){
+      if(this.state === 'confirmQuit') return; // redan öppen
+
+      const quittableStates = ['aim','power','throw','overpower','roundclear','onlineWait','onlineLobby'];
+      if(quittableStates.includes(this.state)){
+        this.previousState = this.state;
+        this.confirmIndex = 0; // förvalt NEJ - man ska aktivt behöva välja JA
+        this.state = 'confirmQuit';
+        this.audio.sfxLock();
+        return;
+      }
+
       if(this.state === 'roomCodeEntry' || this.state === 'roomJoinError'){
-        // Inget att förlora här - hoppa direkt tillbaka utan bekräftelsedialog.
         this.state = 'menu'; this.menuScreen = 'online'; this.menuIndex = 0;
         this.audio.sfxLock();
         return;
       }
-      const quittableStates = ['aim','power','throw','overpower','roundclear','onlineWait','onlineLobby'];
-      if(!quittableStates.includes(this.state)) return;
-      this.previousState = this.state;
-      this.confirmIndex = 0; // förvalt NEJ - man ska aktivt behöva välja JA
-      this.state = 'confirmQuit';
-      this.audio.sfxLock();
+
+      const safeStates = ['highscoreList','roomBusy','gameover','onlineRoundResult','nameentry'];
+      if(safeStates.includes(this.state)){
+        if(this.matchType === 'online') this.exitOnlineMatch();
+        this.state = 'menu'; this.menuScreen = 'main'; this.menuIndex = 0;
+        this.audio.sfxLock();
+        return;
+      }
+      // this.state === 'menu' redan - inget att göra.
     }
     toggleConfirmChoice(){
       this.confirmIndex = this.confirmIndex === 0 ? 1 : 0;
@@ -960,6 +1034,14 @@
     // ---- input ----
     actionPress(){
       this.audio.ensure();
+      // Fiskmåsen i online-duellen kan fångas av VEM SOM HELST, oavsett
+      // vems tur det är - kolla det här, före allt annat, så det aldrig
+      // stör den vanliga sikta/kraft/kasta-sekvensen den kanske också råkar
+      // utlösa samtidigt.
+      if(this.matchType === 'online' && ['aim','power','onlineWait'].includes(this.state)){
+        const gull = this.onlineSeagullPos();
+        if(gull) this.tryClaimSeagull(gull.spawnId);
+      }
       if(this.state === 'confirmQuit'){ this.resolveConfirm(); return; }
       if(this.state === 'overpower'){ this.attemptEarthCatch(); return; }
       if(this.state === 'menu'){
@@ -1012,7 +1094,7 @@
         return;
       }
       if(this.state === 'onlineWait'){ return; } // inte din tur - inget att göra
-      if(this.state === 'onlineRoundResult'){ this.exitOnlineMatch(); this.state = 'menu'; this.menuScreen = 'main'; this.menuIndex = 0; return; }
+      if(this.state === 'onlineRoundResult'){ this.requestRematch(); return; }
       if(this.state === 'aim'){
         this.lockedX = this.aimX;
         this.audio.sfxLock();
@@ -1255,6 +1337,53 @@
       const x1 = s.dir===1 ? W+14 : -14;
       return { x: x0 + (x1-x0)*p, y: s.y, dir: s.dir };
     }
+    // ---- fiskmåsen i online-duellen: delad, klockslagsstyrd flygschema ----
+    pseudoRandom(seed, salt){
+      const v = Math.sin(seed*12.9898 + salt*78.233) * 43758.5453;
+      return v - Math.floor(v);
+    }
+    // Räknar fram om (och var) en fiskmås flyger just nu, rent utifrån
+    // Date.now() - samma formel körs oberoende på båda spelarnas klienter,
+    // så de ser (ungefär, modulo små klockskillnader) samma fågel samtidigt
+    // utan att något behöver skrivas till databasen bara för att bestämma
+    // NÄR hon dyker upp.
+    onlineSeagullPos(){
+      const now = Date.now();
+      const cycleIndex = Math.floor(now / SEAGULL_ONLINE_CYCLE_MS);
+      if(this.pseudoRandom(cycleIndex, 1) > SEAGULL_ONLINE_CHANCE) return null;
+      const elapsed = now - cycleIndex*SEAGULL_ONLINE_CYCLE_MS;
+      if(elapsed > SEAGULL_ONLINE_FLIGHT_MS) return null;
+      const t = elapsed / SEAGULL_ONLINE_FLIGHT_MS;
+      const dir = this.pseudoRandom(cycleIndex, 2) < 0.5 ? 1 : -1;
+      const y = 18 + this.pseudoRandom(cycleIndex, 3)*70;
+      const x0 = dir===1 ? -14 : W+14;
+      const x1 = dir===1 ? W+14 : -14;
+      return { x: x0 + (x1-x0)*t, y, dir, spawnId: cycleIndex };
+    }
+    // Anropas (från actionPress) varje gång A trycks medan en fiskmås är
+    // synlig i en online-match. Vem som helst får försöka, oavsett vems tur
+    // det är - det är en kapplöpning, inte en del av det vanliga kastet.
+    // Första klienten vars transaktion går igenom vinner en extra kast nästa
+    // gång det blir just den spelarens tur (se resolveOnlineThrow).
+    tryClaimSeagull(spawnId){
+      if(!(this.roomCode && window.WiiKubbCloud && window.WiiKubbCloud.claimSeagull)) return;
+      this.claimedSeagullIds = this.claimedSeagullIds || new Set();
+      if(this.claimedSeagullIds.has(spawnId)) return; // redan försökt lokalt för denna fågel
+      this.claimedSeagullIds.add(spawnId);
+      window.WiiKubbCloud.claimSeagull(this.roomCode, spawnId, this.localRole).then(result=>{
+        if(!result) return;
+        if(result.won){
+          this.audio.sfxWin(); this.flash = 0.4;
+          this.message = 'DU FÅNGADE FISKMÅSEN! +1 KAST NÄSTA TUR';
+          this.msgTimer = 1.6;
+          this.lastSeenMessageAt = Date.now(); // så onRoomUpdate inte skriver över med ett äldre meddelande
+        } else if(result.by && result.by !== this.localRole){
+          this.message = 'MOTSTÅNDAREN FÅNGADE FISKMÅSEN FÖRST!';
+          this.msgTimer = 1.2;
+          this.lastSeenMessageAt = Date.now();
+        }
+      });
+    }
     updateSeagull(dt){
       if(!this.seagullActive()){ this.seagull = null; return; }
       if(this.seagull){
@@ -1390,6 +1519,11 @@
           if(e.code === 'Escape'){ e.preventDefault(); this.confirmIndex = 0; this.resolveConfirm(); return; }
           return;
         }
+        if(this.state === 'onlineRoundResult'){
+          if(e.code === 'Enter'){ e.preventDefault(); this.exitToMenuFromResult(); return; }
+          if(e.code === 'Space'){ e.preventDefault(); this.requestRematch(); return; }
+          return;
+        }
         if(e.code === 'Space' || e.code === 'Enter'){ e.preventDefault(); this.actionPress(); }
         if(e.key === 'b' || e.key === 'B'){ this.audio.toggleSound(); }
         if(e.code === 'Escape'){ e.preventDefault(); this.requestQuitConfirm(); }
@@ -1398,6 +1532,7 @@
       document.getElementById('btnStart').addEventListener('click', ()=>{
         if(this.state === 'nameentry'){ this.submitName(); return; }
         if(this.state === 'roomCodeEntry'){ this.joinOnlineRoom(); return; }
+        if(this.state === 'onlineRoundResult'){ this.exitToMenuFromResult(); return; }
         this.actionPress();
       });
       document.getElementById('btnB').addEventListener('click', ()=>this.audio.toggleSound());
@@ -1553,10 +1688,12 @@
         ctx.fillText("PINNAR "+Math.max(this.batons,0), W-8, 12);
       }
 
-      ctx.textAlign='left';
-      ctx.fillStyle = PAL.dark;
-      ctx.font = "4px monospace";
-      ctx.fillText(this.matchType === 'online' ? 'MOTST.' : 'KUBBAR', 8, 14.5);
+      // Ikonraden - kubbarna som just nu attackeras (den som har turen siktar
+      // mot dessa). Ligger i ett eget lugnt band (y 16-24) utan text ovanpå,
+      // och nästa rad text nedanför (y 32) hålls tillräckligt långt ifrån för
+      // att aldrig krocka med den - och tillräckligt högt upp för att aldrig
+      // krocka med de riktiga kubb-sprajtarna som ritas ute på planen (de
+      // börjar runt y 33).
       let ix = 8;
       this.kubbs.forEach(k=>{
         ctx.fillStyle = k.standing ? PAL.darkest : PAL.light;
@@ -1565,9 +1702,7 @@
       });
 
       // Din egen rad - inte den du siktar mot just nu, men bra att se
-      // ställningen på medan man spelar. Text istället för en till ikonrad,
-      // så den inte krockar visuellt med de riktiga kubb-sprajtarna som
-      // ritas ute på planen strax nedanför (runt KUBB_Y).
+      // ställningen på medan man spelar.
       if(this.matchType === 'online' && this.room){
         const ownKubbs = this.localRole === 'player1' ? this.room.team1Kubbs : this.room.team2Kubbs;
         if(ownKubbs){
@@ -1575,7 +1710,7 @@
           ctx.textAlign='left';
           ctx.fillStyle = PAL.darkest;
           ctx.font = "6px monospace";
-          ctx.fillText('DINA KVAR '+left, 8, 24);
+          ctx.fillText('DINA KVAR '+left, 8, 32);
         }
       }
 
@@ -1585,7 +1720,7 @@
           ctx.textAlign='right';
           ctx.fillStyle = PAL.darkest;
           ctx.font = "6px monospace";
-          ctx.fillText("TID "+Math.ceil(this.timeLeft), W-8, 24);
+          ctx.fillText("TID "+Math.ceil(this.timeLeft), W-8, 32);
         }
       }
 
@@ -1594,7 +1729,7 @@
         ctx.textAlign='right';
         ctx.fillStyle = PAL.darkest;
         ctx.font = "6px monospace";
-        ctx.fillText('STÄLLNING '+(wins.player1||0)+'-'+(wins.player2||0), W-8, 24);
+        ctx.fillText('STÄLLNING '+(wins.player1||0)+'-'+(wins.player2||0), W-8, 32);
       }
 
       if(this.phase==='king'){
@@ -1612,7 +1747,7 @@
           ctx.textAlign='center';
           ctx.fillStyle = PAL.dark;
           ctx.font = "5px monospace";
-          ctx.fillText('(MOTSTÅNDAREN OFFLINE)', W/2, 132);
+          ctx.fillText('(MOTSTÅNDAREN OFFLINE)', W/2, 128);
         }
       }
     }
@@ -1637,7 +1772,7 @@
         const kingFallen = this.fallenPieces.some(p=>p.type==='king');
         if(!kingFallen) this.drawKing(KING_X, KING_Y, false);
       }
-      const gullPos = this.seagullPos();
+      const gullPos = this.matchType === 'online' ? this.onlineSeagullPos() : this.seagullPos();
       if(gullPos) this.drawSeagull(gullPos.x, gullPos.y, false, gullPos.dir);
       this.drawThrower();
     }
@@ -1701,7 +1836,9 @@
         ctx.strokeStyle = PAL.darkest;
         ctx.beginPath(); ctx.moveTo(this.aimX, y-16); ctx.lineTo(this.aimX, BASE_Y-2); ctx.stroke();
       }
-      this.centerText("SIKTA", 138, PAL.darkest, 7);
+      // (Ingen "SIKTA"-etikett här längre - sikteslinjen/hårkorset är redan
+      // självförklarande, och varje plats vi testat för texten hamnade i
+      // vägen för antingen kastaren eller planens kant.)
     }
     drawPower(){
       this.drawScene();
@@ -1720,7 +1857,8 @@
       }
       const px_ = bx + (this.powerVal/100)*bw;
       this.rect(px_-1, by-3, 2, bh+6, PAL.darkest);
-      this.centerText("KRAFT", 138, PAL.darkest, 7);
+      // (Ingen "KRAFT"-etikett här längre av samma anledning - kraftmätaren
+      // gör redan jobbet.)
     }
     drawThrowAnim(){
       this.drawScene();
@@ -2070,11 +2208,30 @@
       ctx.closePath();
       ctx.fill();
     }
+    // Meddelanderutan mäter texten och anpassar sin egen bredd (och, om
+    // texten ändå inte får plats, ett par steg mindre typsnitt) istället
+    // för en fast 96px-bredd - annars hamnar många av de längre
+    // meddelandena (t.ex. "TRÄFFADE EN FISKMÅS!" eller "ÖVERKRAFT – ...")
+    // synligt utanför själva rutan.
     drawMessage(){
       if(this.msgTimer > 0){
-        this.rect(30,60,100,20, PAL.darkest);
-        this.rect(32,62,96,16, PAL.lightest);
-        this.centerText(this.message, 72, PAL.darkest, 8);
+        const ctx = this.ctx;
+        ctx.textAlign = 'center';
+        const maxBoxW = 140; // lämnar lite marginal innanför planens kant
+        let fontSize = 8;
+        ctx.font = fontSize + "px monospace";
+        let textW = ctx.measureText(this.message).width;
+        while(textW > maxBoxW - 10 && fontSize > 5){
+          fontSize -= 1;
+          ctx.font = fontSize + "px monospace";
+          textW = ctx.measureText(this.message).width;
+        }
+        const boxW = Math.min(maxBoxW, Math.max(60, textW + 10));
+        const boxX = W/2 - boxW/2;
+        this.rect(boxX-2, 60, boxW+4, 20, PAL.darkest);
+        this.rect(boxX, 62, boxW, 16, PAL.lightest);
+        ctx.fillStyle = PAL.darkest;
+        ctx.fillText(this.message, W/2, 72);
       }
     }
     // ---- animationen som spelas upp varje gång kungen träffas och ramlar ----
@@ -2403,7 +2560,7 @@
       if(Math.floor(this.msgClock*2)%2===0){
         ctx.fillStyle = PAL.darkest;
         ctx.font = "7px monospace";
-        ctx.fillText("MOTSTÅNDARENS TUR...", W/2, 138);
+        ctx.fillText("MOTSTÅNDARENS TUR...", W/2, 133);
       }
     }
     drawOnlineRoundResult(){
@@ -2426,8 +2583,11 @@
       if(Math.floor(this.msgClock*2)%2===0){
         ctx.fillStyle = won ? PAL.darkest : PAL.light;
         ctx.font = "7px monospace";
-        ctx.fillText("TRYCK START = MENY", W/2, 112);
+        ctx.fillText("TRYCK A = REVANSCH", W/2, 108);
       }
+      ctx.fillStyle = won ? PAL.darkest : PAL.light;
+      ctx.font = "6px monospace";
+      ctx.fillText("TRYCK START = MENY", W/2, 122);
     }
 
     // ---- huvudloop ----
@@ -2564,13 +2724,11 @@
 
   // ---- vy-växlare: "FULLSCREEN" (bara skärmen, standard) / "DEVICE" (Game Boy-skal) ----
   (function(){
-    const VIEW_KEY = 'wiiKubbViewMode';
     const btn = document.getElementById('viewToggle');
     const canvas = document.getElementById('gameCanvas');
 
     function apply(mode){
       document.body.classList.toggle('fullscreen-mode', mode === 'fullscreen');
-      try{ localStorage.setItem(VIEW_KEY, mode); }catch(e){}
       if(btn){
         btn.title = mode === 'fullscreen' ? 'Visa Game Boy (F)' : 'Helskärm, bara skärmen (F)';
       }
@@ -2580,12 +2738,11 @@
       apply(next);
     }
 
-    // Helskärm är standardvyn - "bara skärmen" är tänkt att vara det man
-    // möts av först. Den som växlar till Game Boy-vyn får det ihågkommet
-    // till nästa besök (samma sak åt andra hållet).
-    let saved = 'fullscreen';
-    try{ saved = localStorage.getItem(VIEW_KEY) || 'fullscreen'; }catch(e){}
-    apply(saved);
+    // Spelet ska alltid STARTA i helskärmsläge, oavsett vad man växlade
+    // till förra gången - ingen ihågkommen preferens här. Man kan
+    // fortfarande växla till Game Boy-vyn under sessionen (F eller ⛶),
+    // det återställs bara vid nästa sidladdning.
+    apply('fullscreen');
 
     if(btn) btn.addEventListener('click', toggle);
     window.addEventListener('keydown', (e)=>{
@@ -2803,6 +2960,7 @@
           throwsLeft: 2,
           gameNumber: 1,
           wins: { player1: 0, player2: 0 },
+          bonusThrows: { player1: 0, player2: 0 },
           matchWinner: null,
           message: '',
           messageAt: 0,
@@ -2877,9 +3035,36 @@
     catch(err){ console.error('WiiKubbCloud: kunde inte ta bort rum', err); return false; }
   }
 
+  // Kapplöpning om att fånga den synkade fiskmåsen i en online-duell (se
+  // onlineSeagullPos i spelkoden). Bara EN spelare kan "äga" ett givet
+  // spawnId - transaktionen avgör vem. Samma resonemang som i joinRoom:
+  // update-funktionen kan få null första gången bara för att klienten inte
+  // hunnit hämta riktig data än, inte nödvändigtvis för att platsen
+  // verkligen är tom - så vi avbryter ALDRIG på ett första null-pass, vi
+  // skriver optimistiskt och låter servern avgöra/retrya om det redan var
+  // taget.
+  async function claimSeagull(code, spawnId, role){
+    const claimRef = ref(rtdb, 'rooms/'+code+'/seagullClaims/'+spawnId);
+    try{
+      const result = await runTransaction(claimRef, (current)=>{
+        if(current !== null) return undefined; // riktig data visar att någon redan hann före
+        return { by: role, ts: Date.now() };
+      });
+      const finalVal = result.snapshot ? result.snapshot.val() : null;
+      if(result.committed && finalVal && finalVal.by === role){
+        await runTransaction(ref(rtdb, 'rooms/'+code+'/bonusThrows/'+role), (n)=> (n||0) + 1);
+        return { won:true, by:role };
+      }
+      return { won:false, by: finalVal ? finalVal.by : null };
+    }catch(err){
+      console.error('WiiKubbCloud: kunde inte fånga fiskmåsen', err);
+      return { won:false, by:null };
+    }
+  }
+
   window.WiiKubbCloud = {
     submitScore, fetchTopScores,
-    createRoom, joinRoom, updateRoom, deleteRoom, unsubscribeRoom,
+    createRoom, joinRoom, updateRoom, deleteRoom, unsubscribeRoom, claimSeagull,
     ready: true
   };
   window.dispatchEvent(new Event('wiikubb-cloud-ready'));
