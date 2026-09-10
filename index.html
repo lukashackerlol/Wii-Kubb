@@ -2,6 +2,13 @@
 <html lang="sv">
 <head>
 <meta charset="UTF-8">
+<!-- Utan denna renderas sidan som om den vore en 980px-bred datorsida och
+     skalas ner - det utlöser webbläsarens inbyggda "vänta ~300ms för att se
+     om det blir en dubbeltryckning (zooma)"-fördröjning på VARJE tryck, och
+     låter webbläsarens egna pan/zoom-gester tävla med (och ofta vinna över)
+     våra egna svep-gester. Detta var den riktiga boven bakom att touch
+     kändes trasig, mest märkbart vid svepningar i menyn. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>WII-KUBB</title>
 <style>
   :root{
@@ -18,6 +25,7 @@
     display:flex; align-items:center; justify-content:center;
     font-family:'Courier New', monospace;
     overflow:hidden;
+    overscroll-behavior:none; /* inget "dra ner för att uppdatera" eller gummi-studs vid svepningar */
   }
   .device{
     width:min(94vw, 520px);
@@ -60,6 +68,8 @@
     image-rendering:crisp-edges;
     background:#9bbc0f;
     border-radius:2px;
+    touch-action:none; /* vi hanterar alla tryck/svep själva - inget ska panorera/zooma/scrolla */
+    -webkit-user-select:none; user-select:none;
   }
   .controls{
     display:flex; justify-content:space-between; align-items:center;
@@ -250,6 +260,7 @@
       <li><b>Piltangenter</b>Byt läge i menyer, skriv in namn eller rumskod, byt flik i highscore</li>
       <li><b>Esc / ☰</b>Pausa och avbryt en pågående omgång eller match</li>
       <li><b>F / ⛶</b>Växla mellan helskärm och Game Boy-vyn</li>
+      <li><b>På pekskärm i helskärmsläge</b>Svep i en riktning istället för piltangenter, och håll fingret kvar en liten stund för START (t.ex. för att skriva klart ett namn eller gå med i ett rum)</li>
       <li><b>🐦 I online-duell</b>Flyger en fiskmås förbi ibland - vem som helst kan trycka A för att försöka fånga den, oavsett vems tur det är. Den som är snabbast får ett extra kast nästa gång det blir hens tur.</li>
     </ul>
     <button id="helpClose">STÄNG</button>
@@ -547,6 +558,19 @@
 
     getMenuOptions(){
       return MENUS[this.menuScreen].options;
+    }
+    // Vilket menyalternativ (index) en punkt i spelets 160x144-koordinater
+    // ligger inom - samma rutgeometri som drawMenu ritar ur. -1 om ingen
+    // träff (eller om man inte ens är i menyn). Används för att göra
+    // menyn klickbar/hovrbar med mus och pekskärm, inte bara tangentbord.
+    menuOptionIndexAt(gx, gy){
+      if(this.state !== 'menu') return -1;
+      const opts = this.getMenuOptions();
+      for(let i=0;i<opts.length;i++){
+        const y = 30 + i*25;
+        if(gx >= W/2-64 && gx <= W/2+64 && gy >= y && gy <= y+21) return i;
+      }
+      return -1;
     }
     cycleMode(dir){
       dir = dir || 1;
@@ -1528,6 +1552,14 @@
         return;
       }
     }
+    // Delad logik för "START trycktes" - fysiska START-knappen och (i
+    // helskärmsläget) en lång tryckning på skärmen gör samma sak.
+    startPress(){
+      if(this.state === 'nameentry'){ this.submitName(); return; }
+      if(this.state === 'roomCodeEntry'){ this.joinOnlineRoom(); return; }
+      if(this.state === 'onlineRoundResult'){ this.exitToMenuFromResult(); return; }
+      this.actionPress();
+    }
     bindInput(){
       window.addEventListener('keydown', (e)=>{
         if(window.__wiiKubbHelpOpen) return; // kontrollguiden är öppen - rör inte spelet under tiden
@@ -1565,12 +1597,7 @@
         if(e.code === 'Escape'){ e.preventDefault(); this.requestQuitConfirm(); }
       });
       document.getElementById('btnA').addEventListener('click', ()=>this.actionPress());
-      document.getElementById('btnStart').addEventListener('click', ()=>{
-        if(this.state === 'nameentry'){ this.submitName(); return; }
-        if(this.state === 'roomCodeEntry'){ this.joinOnlineRoom(); return; }
-        if(this.state === 'onlineRoundResult'){ this.exitToMenuFromResult(); return; }
-        this.actionPress();
-      });
+      document.getElementById('btnStart').addEventListener('click', ()=>this.startPress());
       document.getElementById('btnB').addEventListener('click', ()=>this.audio.toggleSound());
       document.getElementById('btnMenu').addEventListener('click', ()=>this.requestQuitConfirm());
       document.getElementById('btnSelect').addEventListener('click', ()=>{
@@ -2918,15 +2945,31 @@
       if(e.key === 'f' || e.key === 'F'){ e.preventDefault(); toggle(); }
     });
 
-    // I helskärmsläget finns inga fysiska knappar synliga, så ett tryck/
-    // klick på själva skärmen fungerar som A-knappen (samma som
-    // mellanslag) - utom i avbryt-dialogen, där vänster/höger halva av
-    // skärmen väljer NEJ/JA direkt, eftersom det inte finns några
-    // piltangent-motsvarigheter att peka på i den vyn.
+    // I helskärmsläget finns inga fysiska knappar synliga - all interaktion
+    // sker direkt på skärmen istället, med gester som speglar tangentbordet
+    // rakt av (se dpadPress/startPress): ett enkelt tryck = A, en snabb
+    // svepning i en riktning = motsvarande piltangent, en lång tryckning =
+    // START. Inga permanenta knappar ritas ovanpå skärmen för det här -
+    // helskärmsläget ska fortfarande bara visa "skärmen".
     if(canvas){
+      // Räknar om en punkt i webbläsarens pixlar (clientX/Y) till spelets
+      // egna 160x144-koordinater - samma koordinatsystem som all ritkod
+      // (this.rect, drawMenu m.fl.) använder.
+      function clientToGameCoords(clientX, clientY){
+        const rect = canvas.getBoundingClientRect();
+        if(rect.width <= 0 || rect.height <= 0) return {x:W/2, y:H/2};
+        return {
+          x: (clientX - rect.left) * (W/rect.width),
+          y: (clientY - rect.top) * (H/rect.height)
+        };
+      }
+
+      // Musklick (skrivbord i helskärmsläge) - klickar man direkt på ett
+      // menyalternativ väljs DET, inte bara vad som råkar vara markerat
+      // sedan tidigare (se menyhovring nedan också).
       canvas.addEventListener('click', (e)=>{
         if(!document.body.classList.contains('fullscreen-mode')) return;
-        if(window.__wiiKubbHelpOpen) return; // guiden är öppen - rör inte spelet under tiden
+        if(window.__wiiKubbHelpOpen) return;
         if(kubbGame.state === 'confirmQuit'){
           const rect = canvas.getBoundingClientRect();
           const relX = rect.width > 0 ? (e.clientX - rect.left) / rect.width : 0.5;
@@ -2934,8 +2977,84 @@
           kubbGame.resolveConfirm();
           return;
         }
+        if(kubbGame.state === 'menu'){
+          const g = clientToGameCoords(e.clientX, e.clientY);
+          const idx = kubbGame.menuOptionIndexAt(g.x, g.y);
+          if(idx >= 0) kubbGame.menuIndex = idx;
+        }
         kubbGame.actionPress();
       });
+
+      const MOVE_SPLIT_PX = 20;   // under = tryck (A), över = svepning (piltangent) - inget dött mellanläge
+      const LONG_PRESS_MS = 550;  // hur länge man måste hålla kvar fingret för START
+      let touchStartX = 0, touchStartY = 0, touchStartTime = 0;
+      let longPressTimer = null, longPressFired = false;
+
+      function clearLongPress(){
+        if(longPressTimer){ clearTimeout(longPressTimer); longPressTimer = null; }
+      }
+
+      canvas.addEventListener('touchstart', (e)=>{
+        if(!document.body.classList.contains('fullscreen-mode')) return;
+        clearLongPress();
+        longPressFired = false;
+        if(e.touches.length > 1) return; // ignorera flerfingersgester, håll det enkelt
+        const t = e.changedTouches[0];
+        touchStartX = t.clientX; touchStartY = t.clientY; touchStartTime = Date.now();
+        longPressTimer = setTimeout(()=>{
+          longPressTimer = null;
+          longPressFired = true;
+          if(window.__wiiKubbHelpOpen) return;
+          kubbGame.startPress();
+        }, LONG_PRESS_MS);
+      }, {passive:true});
+
+      canvas.addEventListener('touchmove', (e)=>{
+        if(!document.body.classList.contains('fullscreen-mode')) return;
+        if(!longPressTimer) return;
+        const t = e.changedTouches[0];
+        const moved = Math.max(Math.abs(t.clientX-touchStartX), Math.abs(t.clientY-touchStartY));
+        if(moved > MOVE_SPLIT_PX) clearLongPress(); // det här blir en svepning, inte en lång tryckning
+      }, {passive:true});
+
+      canvas.addEventListener('touchcancel', ()=>{
+        // t.ex. OS:et avbröt beröringen (notis drogs ner mitt i) - släpp allt
+        // utan att trigga vare sig svep, tryck eller START.
+        clearLongPress();
+        longPressFired = false;
+      }, {passive:true});
+
+      canvas.addEventListener('touchend', (e)=>{
+        if(!document.body.classList.contains('fullscreen-mode')) return;
+        clearLongPress();
+        if(longPressFired){ longPressFired = false; e.preventDefault(); return; } // redan hanterat av START ovan
+        if(window.__wiiKubbHelpOpen) return;
+        e.preventDefault(); // hindra en efterföljande "spöke-click" från att dubbeltrigga samma tryck
+        const t = e.changedTouches[0];
+        const dx = t.clientX - touchStartX, dy = t.clientY - touchStartY;
+        const dt = Date.now() - touchStartTime;
+        const adx = Math.abs(dx), ady = Math.abs(dy);
+        const dist = Math.max(adx, ady);
+
+        if(kubbGame.state === 'confirmQuit'){
+          const rect = canvas.getBoundingClientRect();
+          const relX = rect.width > 0 ? (t.clientX - rect.left) / rect.width : 0.5;
+          kubbGame.confirmIndex = relX < 0.5 ? 0 : 1;
+          kubbGame.resolveConfirm();
+          return;
+        }
+        if(dist > MOVE_SPLIT_PX){
+          if(adx > ady) kubbGame.dpadPress(dx > 0 ? 'right' : 'left');
+          else kubbGame.dpadPress(dy > 0 ? 'down' : 'up');
+          return;
+        }
+        if(kubbGame.state === 'menu'){
+          const g = clientToGameCoords(t.clientX, t.clientY);
+          const idx = kubbGame.menuOptionIndexAt(g.x, g.y);
+          if(idx >= 0) kubbGame.menuIndex = idx;
+        }
+        kubbGame.actionPress();
+      }, {passive:false});
     }
   })();
 
