@@ -2451,9 +2451,11 @@
       // (Ingen "KRAFT"-etikett här längre av samma anledning - kraftmätaren
       // gör redan jobbet.)
     }
-    drawThrowAnim(){
+    // Själva planen + pinnen i luften, UTAN HUD - bruten ut för sig så
+    // drawOnlineWait() kan vända bara det här (inte HUD-texten, se dess
+    // kommentar) när man tittar på motståndarens kast.
+    drawThrowAnimScene(){
       this.drawScene();
-      this.drawHUD();
       const a = this.throwAnim;
       const tt = Math.min(1, a.t/a.dur);
       const x = a.x0 + (a.x1-a.x0)*tt;
@@ -2466,6 +2468,10 @@
       // i frontalvyn krymper pinnen ju längre bort (mot kungen) den flyger
       const scale = this.isKingThrowNow() ? (1 - tt*0.6) : 1;
       this.drawBaton(x,y, a.rot, scale);
+    }
+    drawThrowAnim(){
+      this.drawThrowAnimScene();
+      this.drawHUD();
     }
 
     // ---- Överkraft: anime-stil specialsekvens vid för hårt kast ----
@@ -3184,12 +3190,21 @@
     }
     // Spektatorvy medan motståndaren har turen - spelplanen speglas direkt
     // ur det delade rumstillståndet (this.kubbs/this.phase/this.batons, se
-    // onRoomUpdate), så drawScene/drawHUD återanvänds helt oförändrade.
+    // onRoomUpdate). Själva planen (kubbar/kung/kastaren/pinnen i luften)
+    // vänds 180° - precis som i riktig kubb, där man står vid motsatta
+    // kortsidor, ser det då ut som att motståndaren kastar MOT en, in mot
+    // sin egen rad, istället för att spegelvänt se sitt EGET kast om och om
+    // igen. HUD:en och meddelandetexten nedan ritas medvetet UTANFÖR
+    // vändningen så de förblir upprätta och läsbara under hela väntan.
     drawOnlineWait(){
-      if(this.throwAnim) this.drawThrowAnim();
-      else { this.drawScene(); this.drawHUD(); }
-      this.drawMessage();
       const ctx = this.ctx;
+      ctx.save();
+      ctx.translate(W, H);
+      ctx.rotate(Math.PI);
+      if(this.throwAnim) this.drawThrowAnimScene(); else this.drawScene();
+      ctx.restore();
+      this.drawHUD();
+      this.drawMessage();
       ctx.textAlign='center';
       if(Math.floor(this.msgClock*2)%2===0){
         ctx.fillStyle = PAL.darkest;
