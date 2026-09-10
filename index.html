@@ -940,9 +940,10 @@
     // man kastar mot MOTSTÅNDARENS rad. Vem som just nu är under attack
     // (vilken rad som visas/siktas mot) avgörs alltså av vems tur det är,
     // inte av vem jag själv är. "Fasen" (kubbar eller kungen) är inte ett
-    // eget fält i databasen - den räknas alltid fram ur om BÅDA radernas
-    // kubbar är helt fällda ännu (precis som i riktig kubb kan ingen sikta
-    // på kungen förrän hela planen - båda sidors kubbar - är tom), så den
+    // eget fält i databasen - den räknas alltid fram ur om anfallarens EGEN
+    // målrad är helt fälld ännu (precis som i lokalt läge, per spelare - man
+    // ska få chansen att kasta på kungen så fort man själv fällt sin rad, man
+    // ska inte behöva vänta på att motståndaren blir klar med sin), så den
     // kan aldrig hamna i otakt.
     onRoomUpdate(data){
       if(!data) return; // rummet borttaget eller ännu inte skrivet
@@ -956,13 +957,11 @@
         window.WiiKubbCloud.cancelRoomAutoDelete();
       }
       const attacker = data.turn || 'player1';
-      const team1Kubbs = data.team1Kubbs || [true,true,true,true,true];
-      const team2Kubbs = data.team2Kubbs || [true,true,true,true,true];
-      const targetKubbs = attacker === 'player1' ? team2Kubbs : team1Kubbs;
+      const targetKubbs = attacker === 'player1'
+        ? (data.team2Kubbs || [true,true,true,true,true])
+        : (data.team1Kubbs || [true,true,true,true,true]);
       this.kubbs = KUBB_XS.map((x,i)=>({x, standing: !!targetKubbs[i]}));
-      // Kungen blir bara siktbar när HELA planen är tom - inte bara den rad
-      // som just nu attackeras - precis som i riktig kubb.
-      this.phase = (team1Kubbs.every(k=>!k) && team2Kubbs.every(k=>!k)) ? 'king' : 'kubbs';
+      this.phase = targetKubbs.every(k=>!k) ? 'king' : 'kubbs';
       this.batons = typeof data.throwsLeft === 'number' ? data.throwsLeft : 2;
       this.fallenPieces = this.kubbs.filter(k=>!k.standing).map(k=>({x:k.x, y:KUBB_Y, type:'kubb'}));
       // Kungen ritas alltid stående i online-läget - se resolveOnlineThrow för
@@ -1005,11 +1004,10 @@
     // samma resultat genom onRoomUpdate - databasen är alltid facit.
     //
     // Regler (förenklad riktig kubb): man kastar 2 pinnar per tur mot
-    // motståndarens rad. Kungen blir siktbar först när HELA planen är tom -
-    // BÅDA radernas kubbar fällda, inte bara den man själv just attackerar -
-    // precis som i riktig kubb. Den som fäller kungen vinner OMGÅNGEN; den
-    // som råkar slå kungen innan hela planen är tom förlorar den direkt
-    // (samma foul-regel som i lokalt läge). Bäst av 3 omgångar vinner
+    // motståndarens rad. När hela den raden är fälld går kommande kast (även
+    // resten av samma tur) mot kungen istället. Den som fäller kungen vinner
+    // OMGÅNGEN; den som råkar slå kungen innan raden är tom förlorar den
+    // direkt (samma foul-regel som i lokalt läge). Bäst av 3 omgångar vinner
     // MATCHEN - vid en omgångsvinst som inte avgör matchen nollställs båda
     // radernas kubbar och förloraren av omgången börjar nästa.
     resolveOnlineThrow(){
@@ -1020,9 +1018,7 @@
       const team1Kubbs = (room.team1Kubbs || [true,true,true,true,true]).slice();
       const team2Kubbs = (room.team2Kubbs || [true,true,true,true,true]).slice();
       const targetKubbs = attacker === 'player1' ? team2Kubbs : team1Kubbs; // referens - muterar rätt array på plats
-      // Kungen är bara siktbar när BÅDA raderna är tomma - se motsvarande
-      // kommentar i onRoomUpdate().
-      const phase = (team1Kubbs.every(k=>!k) && team2Kubbs.every(k=>!k)) ? 'king' : 'kubbs';
+      const phase = targetKubbs.every(k=>!k) ? 'king' : 'kubbs';
 
       let hit = false, foul = false, gameWinner = null;
       const attackerLabel = attacker === 'player1' ? 'SPELARE 1' : 'SPELARE 2';
@@ -1056,6 +1052,12 @@
       if(gameWinner){
         this.audio[gameWinner === this.localRole ? 'sfxWin' : 'sfxOver']();
         if(gameWinner === this.localRole) this.flash = 0.6; else this.shake = 8;
+        // Markera kungen som fallen (precis som i lokalt läge) så han inte
+        // "studsar upp" och ritas stående igen för en bråkdels sekund mellan
+        // det att fall-animationen tar slut och nästa ögonblicksbild hinner
+        // ekas tillbaka från databasen. Självläker automatiskt så fort
+        // onRoomUpdate() skriver om this.fallenPieces från den färska datan.
+        this.fallenPieces.push({x:KING_X, y:KING_Y, type:'king'});
         wins[gameWinner] = (wins[gameWinner]||0) + 1;
         const winnerLabel = gameWinner === 'player1' ? 'SPELARE 1' : 'SPELARE 2';
         const gameNumber = room.gameNumber || 1;
@@ -1119,11 +1121,30 @@
         updates.throwsLeft = nextThrowsLeft;
       }
 
-      window.WiiKubbCloud.updateRoom(this.roomCode, updates);
-
       this.throwAnim = null;
       this.message = message; this.msgTimer = 1.4;
       this.lastSeenMessageAt = updates.messageAt;
+
+      if(gameWinner){
+        // Kungen träffades (antingen en legitim vinst eller ett foul) - spela
+        // upp samma fall-animation som i lokalt läge (se resolveThrow) innan
+        // omgången/matchen faktiskt går vidare, istället för att hoppa rakt
+        // till nästa skärm med bara en meddelanderad. Själva skrivningen till
+        // Realtime Database (och därmed motståndarens tur/nästa runda) väntar
+        // tills fall-animationen är klar - se finalizeOnlineThrow().
+        this.pendingOnlineUpdate = updates;
+        this.kingFallAnim = {t:0, dur:0.8, x:KING_X, y:KING_Y, impactDone:false, onDone:'online'};
+        this.state = 'kingfall';
+        return;
+      }
+
+      window.WiiKubbCloud.updateRoom(this.roomCode, updates);
+      this.advanceOnlineState(updates);
+    }
+    // Delad "vad händer sedan"-logik: används direkt för ett vanligt kast
+    // (träff/miss), och av finalizeOnlineThrow() efter att kunga-fallet
+    // spelats klart.
+    advanceOnlineState(updates){
       if(updates.status === 'finished'){
         this.state = 'onlineWait'; // onRoomUpdate växlar direkt till resultatskärmen
       } else if(updates.turn === this.localRole){
@@ -1136,6 +1157,17 @@
       } else {
         this.state = 'onlineWait';
       }
+    }
+    // Anropas av updateKingFall() när kunga-fall-animationen för ett ONLINE-
+    // kast (se kingFallAnim.onDone==='online' ovan) är färdigspelad - skriver
+    // äntligen till Realtime Database och går vidare, precis som ett vanligt
+    // kast hade gjort direkt (se resolveOnlineThrow).
+    finalizeOnlineThrow(){
+      const updates = this.pendingOnlineUpdate;
+      this.pendingOnlineUpdate = null;
+      if(!updates) return;
+      window.WiiKubbCloud.updateRoom(this.roomCode, updates);
+      this.advanceOnlineState(updates);
     }
     // Lämnar en pågående eller väntande online-match och städar upp rummet
     // så gott det går (tar bort ett övergivet väntrum, eller markerar hela
@@ -2801,6 +2833,7 @@
         const onDone = a.onDone;
         this.kingFallAnim = null;
         if(onDone === 'gameover') this.endGame();
+        else if(onDone === 'online') this.finalizeOnlineThrow();
         else this.state = 'roundclear';
       }
     }
