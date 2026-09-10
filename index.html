@@ -1125,20 +1125,27 @@
       this.message = message; this.msgTimer = 1.4;
       this.lastSeenMessageAt = updates.messageAt;
 
+      // Skriv till Realtime Database OMEDELBART, oavsett om kunga-fall-
+      // animationen nedan spelas upp eller ej - motståndaren (och min egen
+      // "vänta på tur"-övergång) får ALDRIG vänta på en lokal animation.
+      // requestAnimationFrame (som driver animationen) kan pausas/strypas av
+      // webbläsaren om fliken hamnar i bakgrunden mitt i kunga-kastet, och då
+      // ska det ändå inte gå att fastna - bara den kosmetiska, lokala
+      // fördröjningen innan JAG själv går vidare ska bero på animationen, inte
+      // själva nätverksskrivningen.
+      window.WiiKubbCloud.updateRoom(this.roomCode, updates);
+
       if(gameWinner){
         // Kungen träffades (antingen en legitim vinst eller ett foul) - spela
         // upp samma fall-animation som i lokalt läge (se resolveThrow) innan
-        // omgången/matchen faktiskt går vidare, istället för att hoppa rakt
-        // till nästa skärm med bara en meddelanderad. Själva skrivningen till
-        // Realtime Database (och därmed motståndarens tur/nästa runda) väntar
-        // tills fall-animationen är klar - se finalizeOnlineThrow().
-        this.pendingOnlineUpdate = updates;
+        // JAG SJÄLV går vidare till nästa skärm, istället för att hoppa rakt
+        // dit med bara en meddelanderad. Se finalizeOnlineThrow().
+        this.pendingOnlineNextState = updates;
         this.kingFallAnim = {t:0, dur:0.8, x:KING_X, y:KING_Y, impactDone:false, onDone:'online'};
         this.state = 'kingfall';
         return;
       }
 
-      window.WiiKubbCloud.updateRoom(this.roomCode, updates);
       this.advanceOnlineState(updates);
     }
     // Delad "vad händer sedan"-logik: används direkt för ett vanligt kast
@@ -1159,14 +1166,14 @@
       }
     }
     // Anropas av updateKingFall() när kunga-fall-animationen för ett ONLINE-
-    // kast (se kingFallAnim.onDone==='online' ovan) är färdigspelad - skriver
-    // äntligen till Realtime Database och går vidare, precis som ett vanligt
-    // kast hade gjort direkt (se resolveOnlineThrow).
+    // kast (se kingFallAnim.onDone==='online' ovan) är färdigspelad. Själva
+    // databasskrivningen gjordes redan (omedelbart) i resolveOnlineThrow -
+    // det här är bara MIN EGEN lokala övergång till nästa skärm, nu när
+    // animationen är klar.
     finalizeOnlineThrow(){
-      const updates = this.pendingOnlineUpdate;
-      this.pendingOnlineUpdate = null;
+      const updates = this.pendingOnlineNextState;
+      this.pendingOnlineNextState = null;
       if(!updates) return;
-      window.WiiKubbCloud.updateRoom(this.roomCode, updates);
       this.advanceOnlineState(updates);
     }
     // Lämnar en pågående eller väntande online-match och städar upp rummet
