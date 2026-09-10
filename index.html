@@ -580,6 +580,10 @@
       this.audio.ensure();
       this.round = 1;
       if(this.gameMode === 'timeattack') this.timeLeft = TIME_ATTACK_START;
+      // Hämta/uppdatera den globala topplistan för det här läget redan nu,
+      // så den (förhoppningsvis) hunnit landa till dess omgången är slut och
+      // qualifiesForHighscore ska avgöra om resultatet är värt att fråga om.
+      this.requestOnlineHighscores(this.gameMode, true);
       this.newRound();
     }
     kubbsStanding(){ return this.kubbs.filter(k=>k.standing).length; }
@@ -603,9 +607,22 @@
     saveHighscores(){
       try{ localStorage.setItem(HIGHSCORE_KEY, JSON.stringify(this.highscores)); }catch(e){}
     }
+    // Avgör om resultatet ens är värt att fråga om namn för. Kollar i
+    // första hand mot den GLOBALA topp 10-listan (så namnrutan bara dyker
+    // upp när man faktiskt slagit någon på världslistan, inte bara den
+    // egna lokala cachen som annars fylls på av sig själv efter några
+    // omgångar och triggar prompten för nästan vad som helst). Om molnet
+    // inte är nåbart just nu faller den tillbaka på den lokala cachen -
+    // hellre en approximation än att aldrig fråga alls när man är offline.
     qualifiesForHighscore(round, mode){
-      const list = this.highscores[mode] || [];
       if(round <= 0) return false;
+      const online = this.onlineHighscores[mode];
+      if(online && online.status === 'loaded'){
+        const list = online.list;
+        if(list.length < MAX_HIGHSCORES) return true;
+        return round > list[list.length-1].round;
+      }
+      const list = this.highscores[mode] || [];
       if(list.length < MAX_HIGHSCORES) return true;
       return round > list[list.length-1].round;
     }
@@ -762,7 +779,15 @@
     // målrad är helt fälld ännu, så den kan aldrig hamna i otakt.
     onRoomUpdate(data){
       if(!data) return; // rummet borttaget eller ännu inte skrivet
+      const wasWaiting = this.room && this.room.status === 'waiting';
       this.room = data;
+      // Spelare 1 har precis sett spelare 2 gå med (waiting -> playing) -
+      // dra tillbaka löftet om att radera rummet om skaparen skulle
+      // försvinna, det finns nu en riktig match att skydda istället för ett
+      // tomt väntrum (se cancelRoomAutoDelete i WiiKubbCloud).
+      if(wasWaiting && data.status === 'playing' && this.localRole === 'player1' && window.WiiKubbCloud && window.WiiKubbCloud.cancelRoomAutoDelete){
+        window.WiiKubbCloud.cancelRoomAutoDelete();
+      }
       const attacker = data.turn || 'player1';
       const targetKubbs = attacker === 'player1'
         ? (data.team2Kubbs || [true,true,true,true,true])
@@ -3066,6 +3091,7 @@
   let activeRoomCode = null;
   let activeRoomRef = null;
   let activeRoomCallback = null;
+  let waitingRoomCode = null; // rum vars auto-radering (se createRoom) ev. behöver avbokas
 
   function generateRoomCode(){
     let code = '';
@@ -3082,6 +3108,16 @@
   function unsubscribeRoom(){
     if(activeRoomRef) off(activeRoomRef);
     activeRoomCode = null; activeRoomRef = null; activeRoomCallback = null;
+  }
+  // Kallas av spelkoden så fort värden ser att spelare 2 gått med (rummet
+  // gick från 'waiting' till 'playing') - drar tillbaka löftet om att
+  // radera rummet om värden skulle försvinna, eftersom det nu finns en
+  // riktig match att skydda istället för ett tomt väntrum.
+  function cancelRoomAutoDelete(){
+    if(waitingRoomCode){
+      onDisconnect(ref(rtdb, 'rooms/'+waitingRoomCode)).cancel();
+      waitingRoomCode = null;
+    }
   }
 
   // Försöker några gånger med nya slumpade koder ifall en kollision skulle
@@ -3118,6 +3154,13 @@
         // Best-effort: om värden stänger fliken/tappar nätet markeras hen
         // som frånkopplad så motståndaren kan se det (se drawHUD).
         onDisconnect(ref(rtdb, 'rooms/'+code+'/player1Connected')).set(false);
+        // Städar bort rummet HELT av sig självt om värden försvinner medan
+        // det fortfarande bara är ett väntrum ingen gick med i - annars blir
+        // det ett rum som ligger kvar i databasen för alltid (det här var
+        // den huvudsakliga källan till skräprum under testandet). Avbokas
+        // i cancelRoomAutoDelete() så fort spelare 2 faktiskt går med.
+        onDisconnect(roomRef).remove();
+        waitingRoomCode = code;
         subscribeRoom(code, onUpdate);
         return code;
       }catch(err){
@@ -3209,6 +3252,7 @@
   window.WiiKubbCloud = {
     submitScore, fetchTopScores,
     createRoom, joinRoom, updateRoom, deleteRoom, unsubscribeRoom, claimSeagull,
+    cancelRoomAutoDelete,
     ready: true
   };
   window.dispatchEvent(new Event('wiikubb-cloud-ready'));
