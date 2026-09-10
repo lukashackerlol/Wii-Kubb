@@ -375,9 +375,10 @@
     main: {
       title: 'VÄLJ LÄGE',
       options: [
-        {id:'local',      label:'SPELA LOKALT', desc:'PÅ DEN HÄR ENHETEN'},
-        {id:'online',     label:'ONLINE-DUELL', desc:'SPELA MOT EN VÄN'},
-        {id:'highscores', label:'HIGHSCORE',    desc:'TOPP 10 LISTA'}
+        {id:'local',        label:'SPELA LOKALT',  desc:'PÅ DEN HÄR ENHETEN'},
+        {id:'online',       label:'ONLINE-DUELL',  desc:'SPELA MOT EN VÄN'},
+        {id:'highscores',   label:'HIGHSCORE',     desc:'TOPP 10 LISTA'},
+        {id:'achievements', label:'ACHIEVEMENTS',  desc:'DINA TROFÉER'}
       ]
     },
     local: {
@@ -413,6 +414,10 @@
   const SEAGULL_HIT_KEY = 'wiiKubbSeagullHit'; // sparar om spelaren någonsin träffat en fiskmås (låser upp jaktläges-genvägen)
   const SEAGULL_TOTAL_HITS_KEY = 'wiiKubbSeagullTotalHits'; // livstids-räknare över antal träffade fiskmåsar i jaktläget - återställs ALDRIG (varken mellan rundor eller nya spelomgångar)
   const HAPPY_KING_HITS = 20; // när totalSeagullHits når denna gräns får Kungen ett litet glatt ansikte i de vanliga spellägena
+  // ---- livstidsstatistik som visas på achievements-fliken (se drawAchievements()) ----
+  const ROUNDS_CLEARED_KEY = 'wiiKubbRoundsClearedTotal'; // antal rundor (kungen fälld) klarade totalt i lokalt klassiskt/tid-utmaningsläge
+  const ONLINE_WINS_KEY = 'wiiKubbOnlineWins';     // antal online-matcher (bäst av 3) vunna totalt
+  const ONLINE_LOSSES_KEY = 'wiiKubbOnlineLosses'; // antal online-matcher (bäst av 3) förlorade totalt
 
   // ---- fiskmås-jaktläget (dolt bonusläge, låses upp via highscore-fliken) ----
   const HUNT_GAP_MIN = 0.3, HUNT_GAP_MAX = 0.9; // paus mellan överflygningar - mycket kortare än i vanliga läget
@@ -421,6 +426,45 @@
   const HUNT_FLIGHT_FLOOR = 0.8;                // flygtiden krymper aldrig under detta
   const HUNT_SPEEDUP_HITS = 3;                  // var tredje poäng blir tempot ett snäpp snabbare
   const HUNT_HIT_TOL = 10;                      // träff-tolerans mot fiskmåsen i jaktläget
+
+  // ---- bossmötet: var 10:e träffade fiskmås i jaktläget (samma omgång) ----
+  const BOSS_TRIGGER_HITS = 10;   // var 10:e poäng (10, 20, 30, ...) dyker bossen upp
+  const BOSS_HP = 8;              // antal träffar bossen tål
+  const BOSS_TIME_LIMIT = 45;     // sekunder att besegra bossen på innan hon flyr
+  const BOSS_HIT_TOL = 22;        // stor och lätt att träffa (utmaningen är tiden, inte precisionen)
+  const BOSS_HIT_DUR = 1.6;       // hur länge "besegrad"-animationen visas
+  const BOSS_FACE_GAP_MIN = 1.6, BOSS_FACE_GAP_MAX = 3.4; // paus mellan varje gång hon vänder sig mot spelaren
+  const BOSS_FACE_DUR_MIN = 0.8, BOSS_FACE_DUR_MAX = 1.4; // hur länge hon står och flaxar mot spelaren
+  const BOSS_FLAP_SPEED = 24;     // hur snabbt vingarna flaxar när hon glor rakt på spelaren
+  // ---- Fiskmåskungen (kind==='crown', se startSeagullBoss): supersnabb och
+  // mycket svårare att träffa än den vanliga bossen - se updateBoss() och
+  // checkSeagullThrowCollision().
+  const BOSS_CROWN_SPEED_MULT = 1.9;  // hur mycket snabbare hon rör sig i sitt flygmönster
+  const BOSS_CROWN_AMP_MULT = 1.3;    // rör sig över en större del av skärmen, svårare att förutse
+  const BOSS_CROWN_HIT_TOL = 11;      // ungefär hälften av BOSS_HIT_TOL - betydligt mindre träffyta
+  const BOSS_CROWN_FACE_GAP_MIN = 2.6, BOSS_CROWN_FACE_GAP_MAX = 4.6; // står still och glor mer sällan
+  const BOSS_CROWN_FACE_DUR_MIN = 0.4, BOSS_CROWN_FACE_DUR_MAX = 0.7; // ...och bara en kort stund när hon väl gör det
+  const BOSS_CROWN_VISUAL_SCALE = 0.78; // fiskmåskungen ritas mindre än den vanliga bossen
+  const BOSS_DEFEAT_KEY = 'wiiKubbBossDefeatedEver'; // sparar om spelaren någonsin besegrat den vanliga bossen (visar troféansiktet på highscore-fliken)
+  const BOSS_KING_DEFEAT_KEY = 'wiiKubbBossKingDefeatedEver'; // sparar om spelaren någonsin besegrat fiskmåskungen (uppgraderar trofén till den krönta varianten)
+  const BOSS_PHOENIX_DEFEAT_KEY = 'wiiKubbBossPhoenixDefeatedEver'; // sparar om spelaren någonsin besegrat fenixen (låser upp eld-trofén, se drawSeagull()/drawHighscoreList())
+  // ---- Fenixfågeln (kind==='phoenix', se startSeagullBoss): tredje och
+  // sista boss-nivån, dyker upp först sedan fiskmåskungen besegrats denna
+  // omgång - vilket i praktiken betyder att hon bara möts i eldläget (se
+  // getVisualStage/HELL_FROM_ROUND). Hon är inte snabbare eller svårare att
+  // träffa än den klassiska bossen, men helar sig själv ett steg med jämna
+  // mellanrum (se updateBoss()), så den riktiga utmaningen är att hinna göra
+  // mer skada än hon hinner läka innan den långa tidsgränsen tar slut.
+  const BOSS_PHOENIX_HP = 8;                // antal träffar hon tål (innan helning räknas in)
+  const BOSS_PHOENIX_TIME_LIMIT = 90;       // sekunder att besegra henne på - dubbelt så lång tid som de andra bossarna eftersom hon helar sig
+  const BOSS_PHOENIX_HIT_TOL = 18;          // ungefär mellan BOSS_HIT_TOL och BOSS_CROWN_HIT_TOL
+  const BOSS_PHOENIX_SPEED_MULT = 1.25;     // lite rastlösare än den klassiska bossen
+  const BOSS_PHOENIX_AMP_MULT = 1.15;
+  const BOSS_PHOENIX_FACE_GAP_MIN = 2.0, BOSS_PHOENIX_FACE_GAP_MAX = 3.8;
+  const BOSS_PHOENIX_FACE_DUR_MIN = 0.7, BOSS_PHOENIX_FACE_DUR_MAX = 1.2;
+  const BOSS_PHOENIX_HEAL_INTERVAL = 15;    // sekunder mellan varje gång hon helar sig ett steg, se updateBoss()
+  const BOSS_PHOENIX_HEAL_AMOUNT = 3;       // hur många hp hon helar per gång ("ett steg")
+  const BOSS_PHOENIX_HEAL_ANIM_DUR = 1.3;   // hur länge den helande rörelsen (stiger, glöder, gnistrar) visas
 
   // ---- online-duell (Realtime Database) ----
   // Samma teckenuppsättning som ROOM_CODE_CHARSET i WiiKubbCloud-modulen
@@ -547,7 +591,7 @@
       this.ctx.scale(3,3);
       this.audio = new AudioEngine();
 
-      this.state = 'menu'; // menu, aim, power, throw, overpower, kingfall, seagullhit, roundclear, gameover, nameentry, highscoreList, confirmQuit, roomCodeEntry, roomBusy, onlineLobby, roomJoinError, onlineWait, onlineRoundResult
+      this.state = 'menu'; // menu, aim, power, throw, overpower, kingfall, seagullhit, roundclear, gameover, nameentry, highscoreList, achievements, confirmQuit, roomCodeEntry, roomBusy, onlineLobby, roomJoinError, onlineWait, onlineRoundResult
       this.gameMode = 'classic'; // 'classic' | 'timeattack' - bara relevant i lokalt läge
       this.menuScreen = 'main'; // 'main' | 'local' | 'online' - vilken menyskärm som visas medan state==='menu'
       this.menuIndex = 0;
@@ -567,6 +611,13 @@
       this.lastSeenMessageAt = 0; // undviker att visa samma meddelande om och om igen
       this.hasHitSeagull = this.loadSeagullHitFlag(); // styr om den lilla fiskmåsen visas på highscore-fliken
       this.totalSeagullHits = this.loadSeagullTotalHits(); // livstids-räknare, se SEAGULL_TOTAL_HITS_KEY - laddas en gång och räknas sedan bara uppåt
+      this.totalRoundsCleared = this.loadRoundsClearedTotal(); // livstids-räknare, se ROUNDS_CLEARED_KEY - visas på achievements-fliken
+      this.totalOnlineWins = this.loadOnlineWins();     // livstids-räknare, se ONLINE_WINS_KEY
+      this.totalOnlineLosses = this.loadOnlineLosses(); // livstids-räknare, se ONLINE_LOSSES_KEY
+      this._onlineMatchResultCounted = false; // spärrar dubbelräkning av samma matchresultat, se onRoomUpdate()
+      this.hasDefeatedBossEver = this.loadBossDefeatFlag(); // styr om troféansiktet visas på achievements-fliken
+      this.hasDefeatedBossKingEver = this.loadBossKingDefeatFlag(); // uppgraderar troféansiktet till den krönta varianten
+      this.hasDefeatedBossPhoenixEver = this.loadBossPhoenixDefeatFlag(); // låser upp eld-trofén (se drawAchievements()/drawSeagull())
       // Bekräftelsedialog för MENY-knappen - avbryter/pausar rundan tills man svarar.
       this.previousState = null;
       this.confirmIndex = 0; // 0 = NEJ (fortsätt), 1 = JA (avsluta)
@@ -583,7 +634,14 @@
         seagullhunt:{ status:'idle', list:[] }  // jaktläget har ingen global lista, bara lokal (se requestOnlineHighscores)
       };
       this.highscoreViewMode = 'classic'; // vilken av de två online-tabellerna som hämtas/visas i highscore-fliken
-      this.highscoreFocus = 'classic';    // vad piltangenterna/dpaden flyttar mellan på highscore-fliken (flikarna, eller fiskmås-genvägen)
+      this.highscoreFocus = 'classic';    // vad piltangenterna/dpaden flyttar mellan på highscore-fliken (flikarna eller fiskmås-genvägen)
+      this.achievementFocus = null;       // vilken trofé som är fokuserad på achievements-fliken (se achievementFocusOrder())
+      // Trofé-togglar (se drawAchievements()/drawSeagull()) - av som standard
+      // varje session, precis som ljud-toggeln. Påverkar utseendet på ALLA
+      // vanliga fiskmåsar i spelet medan de är på.
+      this.trophyAngryOn = false;
+      this.trophyKingOn = false;
+      this.trophyPhoenixOn = false;
       this.nameChars = [];      // tecken som skrivs in vid nytt highscore
       this.nameCursor = 0;
       this.pendingHighscoreRound = 0;
@@ -609,6 +667,10 @@
       this.seagullHitAnim = null; // {t,dur,x,y} - spelas upp när man råkar träffa fiskmåsen
       this.lastSeagullLevel = null; // avståndsnivån från senaste överflygningen, undviker upprepning i spawn-logiken
       this.lastSeagullDir = null;   // flygriktningen från senaste överflygningen, se samma anledning
+      this.boss = null; // {hp,maxHp,timeLeft,t,x,y,dir,hitFlash,phase} - bossmåsen i jaktläget, se startSeagullBoss()
+      this.bossDefeats = 0; // hur många bossar som besegrats denna session (jaktläget nollställer den vid varje ny omgång)
+      this.bossJustDefeated = false; // flagga som styr finishSeagullHit() till boss-grenen istället för vanlig poäng
+      this.hasDefeatedKingThisRun = false; // spärrar eld-stämningsläget i jaktläget tills kungen besegrats denna omgång, se getVisualStage()
       this.currentStage = 'normal'; // stämningsläge för lokalt läge, se getVisualStage()
       this.hellParticles = []; // eldgnistor i helvete-läget
 
@@ -766,6 +828,68 @@
     kingIsHappy(){
       return this.totalSeagullHits >= HAPPY_KING_HITS;
     }
+    // ---- livstids-räknare: totalt antal klarade rundor (kungen fälld) i
+    // lokalt klassiskt/tid-utmaningsläge. Räknas bara uppåt, se
+    // updateKingFall() - visas på achievements-fliken (drawAchievements()).
+    loadRoundsClearedTotal(){
+      try{
+        const n = parseInt(localStorage.getItem(ROUNDS_CLEARED_KEY), 10);
+        return Number.isFinite(n) && n > 0 ? n : 0;
+      }catch(e){ return 0; }
+    }
+    incrementRoundsClearedTotal(){
+      this.totalRoundsCleared++;
+      try{ localStorage.setItem(ROUNDS_CLEARED_KEY, String(this.totalRoundsCleared)); }catch(e){}
+    }
+    // ---- livstids-räknare: vunna/förlorade online-matcher (bäst av 3), se
+    // onRoomUpdate() - visas på achievements-fliken (drawAchievements()).
+    loadOnlineWins(){
+      try{
+        const n = parseInt(localStorage.getItem(ONLINE_WINS_KEY), 10);
+        return Number.isFinite(n) && n > 0 ? n : 0;
+      }catch(e){ return 0; }
+    }
+    incrementOnlineWins(){
+      this.totalOnlineWins++;
+      try{ localStorage.setItem(ONLINE_WINS_KEY, String(this.totalOnlineWins)); }catch(e){}
+    }
+    loadOnlineLosses(){
+      try{
+        const n = parseInt(localStorage.getItem(ONLINE_LOSSES_KEY), 10);
+        return Number.isFinite(n) && n > 0 ? n : 0;
+      }catch(e){ return 0; }
+    }
+    incrementOnlineLosses(){
+      this.totalOnlineLosses++;
+      try{ localStorage.setItem(ONLINE_LOSSES_KEY, String(this.totalOnlineLosses)); }catch(e){}
+    }
+    // ---- flaggor: har spelaren besegrat bossmåsen (och fiskmåskungen) i
+    // jaktläget? Styr troféansiktet på highscore-fliken, se drawHighscoreList()
+    // och drawBossTrophyFace() - permanenta, sparas i localStorage.
+    loadBossDefeatFlag(){
+      try{ return localStorage.getItem(BOSS_DEFEAT_KEY) === '1'; }catch(e){ return false; }
+    }
+    markBossDefeatedEver(){
+      if(this.hasDefeatedBossEver) return; // redan upplåst, inget mer att spara
+      this.hasDefeatedBossEver = true;
+      try{ localStorage.setItem(BOSS_DEFEAT_KEY, '1'); }catch(e){}
+    }
+    loadBossKingDefeatFlag(){
+      try{ return localStorage.getItem(BOSS_KING_DEFEAT_KEY) === '1'; }catch(e){ return false; }
+    }
+    markBossKingDefeatedEver(){
+      if(this.hasDefeatedBossKingEver) return; // redan upplåst, inget mer att spara
+      this.hasDefeatedBossKingEver = true;
+      try{ localStorage.setItem(BOSS_KING_DEFEAT_KEY, '1'); }catch(e){}
+    }
+    loadBossPhoenixDefeatFlag(){
+      try{ return localStorage.getItem(BOSS_PHOENIX_DEFEAT_KEY) === '1'; }catch(e){ return false; }
+    }
+    markBossPhoenixDefeatedEver(){
+      if(this.hasDefeatedBossPhoenixEver) return; // redan upplåst, inget mer att spara
+      this.hasDefeatedBossPhoenixEver = true;
+      try{ localStorage.setItem(BOSS_PHOENIX_DEFEAT_KEY, '1'); }catch(e){}
+    }
     // ---- global highscore-lista via Firestore (se WiiKubbCloud-modulen) ----
     cloudReady(){
       return !!(window.WiiKubbCloud && window.WiiKubbCloud.ready);
@@ -840,7 +964,8 @@
       this.state = 'gameover';
     }
     // ---- highscore-flikens fokus: bläddrar mellan de två tabellerna och,
-    // om spelaren låst upp den, fiskmås-jakt-genvägen.
+    // om spelaren låst upp den, fiskmås-jakt-genvägen. Trofé-togglarna bor
+    // numera på en egen achievements-flik, se achievementFocusOrder() nedan.
     highscoreFocusOrder(){
       const order = ['classic','timeattack'];
       if(this.hasHitSeagull) order.push('seagull');
@@ -856,6 +981,25 @@
         this.highscoreViewMode = this.highscoreFocus;
         this.requestOnlineHighscores(this.highscoreViewMode);
       }
+      this.audio.sfxLock();
+    }
+    // ---- achievements-flikens fokus: bläddrar mellan de upplåsta
+    // trofé-togglarna (se drawAchievements()). Tom lista om inga trofféer
+    // är upplåsta ännu - moveAchievementFocus/actionPress hanterar det.
+    achievementFocusOrder(){
+      const order = [];
+      if(this.hasDefeatedBossEver) order.push('trophyAngry');
+      if(this.hasDefeatedBossKingEver) order.push('trophyKing');
+      if(this.hasDefeatedBossPhoenixEver) order.push('trophyPhoenix');
+      return order;
+    }
+    moveAchievementFocus(dir){
+      const order = this.achievementFocusOrder();
+      if(order.length === 0) return;
+      let idx = order.indexOf(this.achievementFocus);
+      if(idx < 0) idx = 0;
+      idx = (idx + dir + order.length) % order.length;
+      this.achievementFocus = order[idx];
       this.audio.sfxLock();
     }
 
@@ -889,6 +1033,7 @@
       this.matchType = 'online';
       this.lastPlayedThrowTs = 0;
       this.lastSeenMessageAt = 0;
+      this._onlineMatchResultCounted = false;
       this.state = 'onlineLobby';
     }
     async joinOnlineRoom(){
@@ -914,6 +1059,7 @@
       this.matchType = 'online';
       this.lastPlayedThrowTs = 0;
       this.lastSeenMessageAt = 0;
+      this._onlineMatchResultCounted = false;
       this.state = 'onlineWait'; // player1 alltid först - onRoomUpdate rättar till detta om det redan blivit vår tur
     }
     roomEntryChangeLetter(dir){
@@ -984,9 +1130,15 @@
       }
 
       if(data.status === 'finished'){
+        if(!this._onlineMatchResultCounted && data.matchWinner){
+          this._onlineMatchResultCounted = true;
+          if(data.matchWinner === this.localRole) this.incrementOnlineWins();
+          else this.incrementOnlineLosses();
+        }
         this.state = 'onlineRoundResult';
         return;
       }
+      if(data.status === 'playing') this._onlineMatchResultCounted = false; // ny/pågående match (även rematch) - redo att räkna nästa avgörande igen
       if(data.status !== 'playing') return; // fortfarande i väntrummet
 
       const myTurn = attacker === this.localRole;
@@ -1256,7 +1408,7 @@
         return;
       }
 
-      const safeStates = ['highscoreList','roomBusy','gameover','onlineRoundResult','nameentry'];
+      const safeStates = ['highscoreList','achievements','roomBusy','gameover','onlineRoundResult','nameentry'];
       if(safeStates.includes(this.state)){
         if(this.matchType === 'online') this.exitOnlineMatch();
         this.state = 'menu'; this.menuScreen = 'main'; this.menuIndex = 0;
@@ -1276,18 +1428,11 @@
         this.overAnim = null;
         this.audio.sfxOver();
         if(this.matchType === 'online') this.exitOnlineMatch();
-        if(this.gameMode === 'seagullhunt' && this.round > 0){
-          // Jaktläget har ingen naturlig "game over" (oändligt med kast) -
-          // att avbryta ÄR alltså det enda sättet en omgång tar slut, så det
-          // måste räknas som att rundan är över här, annars går en bra
-          // poäng bara förlorad utan att någonsin kollas mot highscore-
-          // listan. round<=0 (avbrutit utan att ens träffat en fiskmås) går
-          // rakt till menyn istället - inget att fråga om då.
-          this.endGame();
-        } else {
-          this.state = 'menu';
-          this.menuScreen = 'main'; this.menuIndex = 0;
-        }
+        // Att avbryta jaktläget räknas inte som en avslutad omgång - man går
+        // rakt till menyn precis som vid avbrott i övriga lägen, utan att
+        // frågas om highscore-namn (se endGame()/qualifiesForHighscore()).
+        this.state = 'menu';
+        this.menuScreen = 'main'; this.menuIndex = 0;
       } else {
         // NEJ - fortsätt exakt där man var.
         this.state = this.previousState;
@@ -1330,6 +1475,12 @@
           this.state = 'highscoreList';
           return;
         }
+        if(chosen.id === 'achievements'){
+          const order = this.achievementFocusOrder();
+          this.achievementFocus = order.includes(this.achievementFocus) ? this.achievementFocus : (order[0] || null);
+          this.state = 'achievements';
+          return;
+        }
         if(chosen.id === 'classic' || chosen.id === 'timeattack'){
           this.matchType = 'local';
           this.gameMode = chosen.id;
@@ -1348,6 +1499,21 @@
       if(this.state === 'highscoreList'){
         if(this.highscoreFocus === 'seagull' && this.hasHitSeagull){
           this.enterSeagullHunt();
+        } else {
+          this.state = 'menu';
+        }
+        return;
+      }
+      if(this.state === 'achievements'){
+        if(this.achievementFocus === 'trophyAngry' && this.hasDefeatedBossEver){
+          this.trophyAngryOn = !this.trophyAngryOn;
+          this.audio.sfxLock();
+        } else if(this.achievementFocus === 'trophyKing' && this.hasDefeatedBossKingEver){
+          this.trophyKingOn = !this.trophyKingOn;
+          this.audio.sfxLock();
+        } else if(this.achievementFocus === 'trophyPhoenix' && this.hasDefeatedBossPhoenixEver){
+          this.trophyPhoenixOn = !this.trophyPhoenixOn;
+          this.audio.sfxLock();
         } else {
           this.state = 'menu';
         }
@@ -1392,12 +1558,12 @@
         if(this.gameMode !== 'seagullhunt' && this.lockedPower > ideal + tol){
           // Överkraft: kraftmätaren landade till höger om träffytan.
           // Pausa det ordinarie spelet och kör specialsekvensen istället för ett vanligt kast.
-          // Slumpa vilken av de tre pinsamma miss-sekvenserna som spelas upp:
+          // Slumpa vilken av de pinsamma miss-sekvenserna som spelas upp:
           // man träffar sitt eget ben, kastet skjuter iväg och träffar en
-          // förbipasserande fiskmås, eller pinnen far ett helt varv runt jorden
-          // och kommer tillbaka bakifrån.
-          const overVariantRoll = Math.random();
-          const overVariant = overVariantRoll < 1/3 ? 'bird' : (overVariantRoll < 2/3 ? 'earth' : 'leg');
+          // förbipasserande fiskmås, eller pinnen far ett helt varv runt
+          // jorden och kommer tillbaka bakifrån.
+          const overVariants = ['bird','earth','leg'];
+          const overVariant = overVariants[Math.floor(Math.random()*overVariants.length)];
           this.overAnim = {t:0, rot:0, phase:'closeup', variant: overVariant};
           this.state = 'overpower';
           return;
@@ -1628,14 +1794,196 @@
       this.seagullHitAnim = null;
       this.lastSeagullLevel = null;
       this.lastSeagullDir = null;
+      this.boss = null;           // stor sur fiskmås-bossen, se startSeagullBoss()
+      this.bossJustDefeated = false;
+      this.bossDefeats = 0;
+      this.hasDefeatedKingThisRun = false; // spärrar eld-stämningsläget tills kungen besegrats denna omgång, se getVisualStage()
       this.aimSpeed = 2.6;
       this.powerSpeed = 3.6;
       this.state = 'aim';
       this.aimT = 0;
     }
 
+    // ---- bossmötet: var BOSS_TRIGGER_HITS:e träff i jaktläget ----
+    // Ingen ny meny-/spelfas krävs - bossen ersätter bara den vanliga
+    // småmåsen medan den är i luften (se seagullActive()/updateBoss()) och
+    // spelet stannar kvar i det vanliga sikta/kraft/kasta-flödet. Det som
+    // gör det till en boss är hälsan (flera träffar krävs) och klockan
+    // (misslyckas man innan tiden runnit ut flyr hon utan belöning).
+    startSeagullBoss(){
+      this.seagull = null;
+      // Har man redan besegrat en boss denna omgång dyker nästa nivå upp
+      // istället: klassisk -> krönt fiskmåskung -> fenixfågel (se
+      // drawSeagullBoss/drawSeagullBossFront/drawPhoenixBoss) med en egen
+      // hälsningsreplik var. Fenixen är den sista nivån - fler besegrade
+      // bossar denna omgång ger bara fler fenixmöten.
+      const kind = this.bossDefeats === 0 ? 'classic' : (this.bossDefeats === 1 ? 'crown' : 'phoenix');
+      const nextFaceIn = kind === 'crown'
+        ? BOSS_CROWN_FACE_GAP_MIN + Math.random()*(BOSS_CROWN_FACE_GAP_MAX-BOSS_CROWN_FACE_GAP_MIN)
+        : kind === 'phoenix'
+          ? BOSS_PHOENIX_FACE_GAP_MIN + Math.random()*(BOSS_PHOENIX_FACE_GAP_MAX-BOSS_PHOENIX_FACE_GAP_MIN)
+          : BOSS_FACE_GAP_MIN + Math.random()*(BOSS_FACE_GAP_MAX-BOSS_FACE_GAP_MIN);
+      const hp = kind === 'phoenix' ? BOSS_PHOENIX_HP : BOSS_HP;
+      this.boss = {
+        hp, maxHp: hp,
+        timeLeft: kind === 'phoenix' ? BOSS_PHOENIX_TIME_LIMIT : BOSS_TIME_LIMIT,
+        t: 0, x: 80, y: 55, dir: 1, hitFlash: 0,
+        facePlayer: false,   // true = vänd mot spelaren och flaxar, se updateBoss()
+        faceTimer: 0,        // hur länge kvar av den pågående vänd-mot-spelaren-stunden
+        nextFaceIn,
+        flapPhase: 0,        // animerar vingslaget medan facePlayer är true
+        kind,                // 'classic' | 'crown' | 'phoenix' - styr utseendet, se ovan
+        // Fenixens självläkning - se updateBoss(). Oanvänt av de andra kinderna.
+        healTimer: BOSS_PHOENIX_HEAL_INTERVAL,
+        isHealing: false,    // true = spelar upp den helande rörelsen just nu
+        healAnimT: 0,
+        healBaseX: 80, healBaseY: 55, // positionen hon helar från, se updateBoss()
+        phase: 'fight' // 'fight' -> 'defeated' (fall-animationen, se triggerBossHit)
+      };
+      this.audio.sfxHit();
+      this.shake = Math.max(this.shake, 8);
+      this.message = kind === 'crown' ? 'FISKMÅSKUNGEN ANLÄNDER!' : (kind === 'phoenix' ? 'FENIXFÅGELN VAKNAR!' : 'STOR SUR FISKMÅS!');
+      this.msgTimer = 1.6;
+      this.state = 'aim';
+      this.aimT = Math.random()*10;
+    }
+    // Bossens flygmönster - stannar inom skärmen och blir lite mer rastlös
+    // ju mer skadad hon är, istället för att flyga rakt över som en vanlig
+    // överflygning. Anropas i huvudloopen istället för updateSeagull() så
+    // länge this.boss finns (se seagullActive()).
+    // Med jämna mellanrum slutar hon flyga i sidled, vänder sig rakt mot
+    // spelaren och flaxar häftigt ett litet tag (facePlayer) innan hon
+    // fortsätter flyga som vanligt - se drawSeagullBossFront().
+    updateBoss(dt){
+      const b = this.boss;
+      if(!b || b.phase !== 'fight') return;
+      const crowned = b.kind === 'crown';
+      const phoenix = b.kind === 'phoenix';
+      const speedMult = crowned ? BOSS_CROWN_SPEED_MULT : (phoenix ? BOSS_PHOENIX_SPEED_MULT : 1);
+      const ampMult = crowned ? BOSS_CROWN_AMP_MULT : (phoenix ? BOSS_PHOENIX_AMP_MULT : 1);
+      b.t += dt;
+      if(b.hitFlash > 0) b.hitFlash = Math.max(0, b.hitFlash - dt);
+      // Fenixens självläkning - kollas varje frame oavsett facePlayer, och
+      // tar över flygningen helt medan den helande rörelsen spelas upp (hon
+      // stiger sakta uppåt och glöder, se drawPhoenixBoss/healPhase).
+      // Läkningen i sig (b.hp++) sker en gång direkt när klockan går ut,
+      // sedan spelas bara rörelsen upp; se BOSS_PHOENIX_HEAL_INTERVAL/-AMOUNT.
+      if(phoenix){
+        if(b.isHealing){
+          b.healAnimT += dt;
+          const p = Math.min(1, b.healAnimT / BOSS_PHOENIX_HEAL_ANIM_DUR);
+          b.y = b.healBaseY - p * 16;
+          b.x = b.healBaseX + Math.sin(b.healAnimT*3) * 4;
+          if(b.healAnimT >= BOSS_PHOENIX_HEAL_ANIM_DUR){
+            b.isHealing = false;
+          }
+          return; // ingen vanlig flygning/facePlayer medan helandet pågår
+        }
+        b.healTimer -= dt;
+        if(b.healTimer <= 0){
+          b.healTimer = BOSS_PHOENIX_HEAL_INTERVAL;
+          if(b.hp < b.maxHp){
+            b.hp = Math.min(b.maxHp, b.hp + BOSS_PHOENIX_HEAL_AMOUNT);
+            b.isHealing = true;
+            b.healAnimT = 0;
+            b.healBaseX = b.x; b.healBaseY = b.y;
+            this.message = 'FENIXEN HELAR SIG!';
+            this.msgTimer = 1.2;
+            this.audio.sfxLock();
+            return; // hoppa rakt in i den helande rörelsen nästa fram, ingen vanlig flygning denna frame
+          }
+        }
+      }
+      if(b.facePlayer){
+        b.flapPhase += dt * BOSS_FLAP_SPEED * speedMult;
+        b.x += Math.sin(b.t*5*speedMult) * 0.5; // står nästan still, vajar bara lite av det häftiga flaxandet
+        b.faceTimer -= dt;
+        if(b.faceTimer <= 0){
+          b.facePlayer = false;
+          b.nextFaceIn = crowned
+            ? BOSS_CROWN_FACE_GAP_MIN + Math.random()*(BOSS_CROWN_FACE_GAP_MAX-BOSS_CROWN_FACE_GAP_MIN)
+            : phoenix
+              ? BOSS_PHOENIX_FACE_GAP_MIN + Math.random()*(BOSS_PHOENIX_FACE_GAP_MAX-BOSS_PHOENIX_FACE_GAP_MIN)
+              : BOSS_FACE_GAP_MIN + Math.random()*(BOSS_FACE_GAP_MAX-BOSS_FACE_GAP_MIN);
+        }
+        return;
+      }
+      const frenzy = (1 + (b.maxHp - b.hp) * 0.12) * speedMult;
+      b.x = 80 + Math.sin(b.t*0.85*frenzy) * 55 * ampMult;
+      b.y = 55 + Math.sin(b.t*1.3*frenzy + 1.7) * 28 * ampMult;
+      b.dir = Math.cos(b.t*0.85*frenzy) >= 0 ? 1 : -1;
+      b.nextFaceIn -= dt;
+      if(b.nextFaceIn <= 0){
+        b.facePlayer = true;
+        b.faceTimer = crowned
+          ? BOSS_CROWN_FACE_DUR_MIN + Math.random()*(BOSS_CROWN_FACE_DUR_MAX-BOSS_CROWN_FACE_DUR_MIN)
+          : phoenix
+            ? BOSS_PHOENIX_FACE_DUR_MIN + Math.random()*(BOSS_PHOENIX_FACE_DUR_MAX-BOSS_PHOENIX_FACE_DUR_MIN)
+            : BOSS_FACE_DUR_MIN + Math.random()*(BOSS_FACE_DUR_MAX-BOSS_FACE_DUR_MIN);
+        b.flapPhase = 0;
+      }
+    }
+    // Tiden tog slut innan bossen besegrades - hon flyr utan att ge någon
+    // belöning, och jaktläget fortsätter precis som vanligt igen.
+    loseSeagullBoss(){
+      const wasPhoenix = this.boss && this.boss.kind === 'phoenix';
+      this.boss = null;
+      this.audio.sfxOver();
+      this.message = wasPhoenix ? 'FENIXEN FLYDDE!' : 'BOSSEN FLYDDE!';
+      this.msgTimer = 1.4;
+      this.throwAnim = null;
+      this.state = 'aim';
+      this.aimT = Math.random()*10;
+    }
+    // Anropas från checkSeagullThrowCollision() när ett kast träffar bossen.
+    // Ett snabbt tillslag räcker inte - det krävs BOSS_HP träffar innan hon
+    // är besegrad, annars fortsätter mötet direkt med nästa kast.
+    triggerBossHit(x,y){
+      const b = this.boss;
+      if(!b || b.phase !== 'fight') return;
+      this.markSeagullHit();
+      this.incrementSeagullTotalHits();
+      this.audio.sfxHit();
+      this.shake = Math.max(this.shake, 6);
+      b.hp = Math.max(0, b.hp - 1);
+      this.throwAnim = null;
+      if(b.hp <= 0){
+        b.phase = 'defeated';
+        this.message = b.kind === 'phoenix' ? 'FENIXEN BESEGRAD!' : 'BOSSEN BESEGRAD!';
+        this.msgTimer = 1.6;
+        this.bossJustDefeated = true;
+        this.seagullHitAnim = {t:0, dur:BOSS_HIT_DUR, x, y, scale:1, dir:b.dir, boss:true, bossKind:b.kind};
+        this.state = 'seagullhit';
+      } else {
+        b.hitFlash = 0.25;
+        this.message = b.hp+' KVAR!';
+        this.msgTimer = 0.5;
+        this.state = 'aim';
+        this.aimT = Math.random()*10;
+      }
+    }
+    // Anropas från finishSeagullHit() sedan besegrad-animationen spelats
+    // klart. Belöningen är visuell: ett troféansikte på highscore-fliken (se
+    // markBossDefeatedEver/markBossKingDefeatedEver/markBossPhoenixDefeatedEver
+    // och drawHighscoreList()).
+    onBossDefeated(){
+      this.bossDefeats++;
+      const kind = this.boss ? this.boss.kind : 'classic';
+      this.markBossDefeatedEver();
+      if(kind === 'crown'){
+        this.markBossKingDefeatedEver();
+        this.hasDefeatedKingThisRun = true; // släpper spärren på eld-stämningsläget, se getVisualStage()
+      } else if(kind === 'phoenix'){
+        this.markBossPhoenixDefeatedEver();
+      }
+      this.boss = null;
+    }
+
     // ---- fiskmåsen som flyger förbi under spelet ----
     seagullActive(){
+      // Medan bossen är i luften ska inga vanliga småmåsar dyka upp också -
+      // se updateBoss()/startSeagullBoss() som tar över istället.
+      if(this.boss) return false;
       // I jaktläget ska måsen flyga nästan konstant - hela poängen är att
       // ständigt ha något att sikta på.
       if(this.gameMode === 'seagullhunt') return true;
@@ -1816,7 +2164,10 @@
     // att träffa än en nära, men aldrig omöjlig.
     checkSeagullThrowCollision(){
       if(!this.throwAnim || this.throwAnim.birdHit) return;
-      const pos = this.seagullPos();
+      // Bossen (om en är i luften) tar över kollisionsmålet helt från den
+      // vanliga småmåsen - se startSeagullBoss()/seagullActive().
+      const bossActive = this.boss && this.boss.phase === 'fight';
+      const pos = bossActive ? {x:this.boss.x, y:this.boss.y} : this.seagullPos();
       if(!pos) return;
       const a = this.throwAnim;
       const tt = Math.min(1, a.t/a.dur);
@@ -1824,11 +2175,17 @@
       const yLinear = a.y0 + (a.y1-a.y0)*tt;
       const arc = Math.sin(Math.PI*tt) * 14;
       const y = yLinear - arc;
-      const baseTol = this.gameMode === 'seagullhunt' ? HUNT_HIT_TOL : SEAGULL_HIT_TOL;
-      const tol = baseTol * this.seagullScaleForY(pos.y);
+      // Bossen är stor - hon har en fast, generös träfftolerans istället för
+      // att skalas efter avstånd som den vanliga (mindre) måsen. Fiskmåskungen
+      // (kind==='crown') är däremot betydligt svårare att träffa, se
+      // BOSS_CROWN_HIT_TOL.
+      const tol = bossActive
+        ? (this.boss.kind === 'crown' ? BOSS_CROWN_HIT_TOL : (this.boss.kind === 'phoenix' ? BOSS_PHOENIX_HIT_TOL : BOSS_HIT_TOL))
+        : (this.gameMode === 'seagullhunt' ? HUNT_HIT_TOL : SEAGULL_HIT_TOL) * this.seagullScaleForY(pos.y);
       if(Math.hypot(x-pos.x, y-pos.y) < tol){
         a.birdHit = true;
-        this.triggerSeagullHit(pos.x, pos.y);
+        if(bossActive) this.triggerBossHit(pos.x, pos.y);
+        else this.triggerSeagullHit(pos.x, pos.y);
       }
     }
     triggerSeagullHit(x,y){
@@ -1856,8 +2213,23 @@
     // ett förlorat kast: fiskmåsen kom i vägen innan pinnen hann fram.
     finishSeagullHit(){
       this.seagullCooldown = this.nextSeagullGap();
+      // Bossens fall-animation återanvänder samma "seagullhit"-scen som en
+      // vanlig träff, men ska INTE räknas som ytterligare ett poäng (den
+      // träffen som utlöste bossen räknades redan innan hon dök upp) - bara
+      // ge belöningen och släppa tillbaka spelaren i jakten.
+      if(this.bossJustDefeated){
+        this.bossJustDefeated = false;
+        this.onBossDefeated();
+        this.state = 'aim';
+        this.aimT = Math.random()*10;
+        return;
+      }
       if(this.gameMode === 'seagullhunt'){
         this.round++;
+        if(!this.boss && this.round % BOSS_TRIGGER_HITS === 0){
+          this.startSeagullBoss();
+          return;
+        }
         this.state = 'aim';
         this.aimT = Math.random()*10;
         return;
@@ -1903,6 +2275,10 @@
         if(dir === 'left' || dir === 'right') this.moveHighscoreFocus(dir === 'right' ? 1 : -1);
         return;
       }
+      if(this.state === 'achievements'){
+        if(dir === 'left' || dir === 'right') this.moveAchievementFocus(dir === 'right' ? 1 : -1);
+        return;
+      }
     }
     // Delad logik för "START trycktes" - fysiska START-knappen och (i
     // helskärmsläget) en lång tryckning på skärmen gör samma sak.
@@ -1918,7 +2294,7 @@
 
         const arrowDir = e.code==='ArrowUp' ? 'up' : e.code==='ArrowDown' ? 'down'
           : e.code==='ArrowLeft' ? 'left' : e.code==='ArrowRight' ? 'right' : null;
-        if(arrowDir && ['nameentry','roomCodeEntry','confirmQuit','menu','highscoreList'].includes(this.state)){
+        if(arrowDir && ['nameentry','roomCodeEntry','confirmQuit','menu','highscoreList','achievements'].includes(this.state)){
           e.preventDefault();
           this.dpadPress(arrowDir);
           return;
@@ -1970,17 +2346,50 @@
       // Direkt tryck/klick på den lilla fiskmåsen på highscore-fliken hoppar
       // rakt in i jaktläget, oavsett var fokus råkar stå i flik-navigeringen.
       this.canvas.addEventListener('click', (e)=>{
-        if(this.state !== 'highscoreList' || !this.hasHitSeagull || !this._decoSeagullBox) return;
+        if(this.state !== 'highscoreList') return;
         const rect = this.canvas.getBoundingClientRect();
         if(rect.width === 0 || rect.height === 0) return;
         const scaleX = W / rect.width, scaleY = H / rect.height;
         const x = (e.clientX - rect.left) * scaleX;
         const y = (e.clientY - rect.top) * scaleY;
-        const box = this._decoSeagullBox;
-        if(x >= box.x && x <= box.x+box.w && y >= box.y && y <= box.y+box.h){
+        const inBox = (box)=> box && x >= box.x && x <= box.x+box.w && y >= box.y && y <= box.y+box.h;
+        if(this.hasHitSeagull && inBox(this._decoSeagullBox)){
           e.stopImmediatePropagation();
           this.highscoreFocus = 'seagull';
           this.enterSeagullHunt();
+          return;
+        }
+      });
+      // Direkt tryck/klick på trofé-ikonerna på achievements-fliken togglar
+      // dem på/av, oavsett var fokus råkar stå i flik-navigeringen.
+      this.canvas.addEventListener('click', (e)=>{
+        if(this.state !== 'achievements') return;
+        const rect = this.canvas.getBoundingClientRect();
+        if(rect.width === 0 || rect.height === 0) return;
+        const scaleX = W / rect.width, scaleY = H / rect.height;
+        const x = (e.clientX - rect.left) * scaleX;
+        const y = (e.clientY - rect.top) * scaleY;
+        const inBox = (box)=> box && x >= box.x && x <= box.x+box.w && y >= box.y && y <= box.y+box.h;
+        if(this.hasDefeatedBossEver && inBox(this._decoTrophyAngryBox)){
+          e.stopImmediatePropagation();
+          this.achievementFocus = 'trophyAngry';
+          this.trophyAngryOn = !this.trophyAngryOn;
+          this.audio.sfxLock();
+          return;
+        }
+        if(this.hasDefeatedBossKingEver && inBox(this._decoTrophyKingBox)){
+          e.stopImmediatePropagation();
+          this.achievementFocus = 'trophyKing';
+          this.trophyKingOn = !this.trophyKingOn;
+          this.audio.sfxLock();
+          return;
+        }
+        if(this.hasDefeatedBossPhoenixEver && inBox(this._decoTrophyPhoenixBox)){
+          e.stopImmediatePropagation();
+          this.achievementFocus = 'trophyPhoenix';
+          this.trophyPhoenixOn = !this.trophyPhoenixOn;
+          this.audio.sfxLock();
+          return;
         }
       });
     }
@@ -2196,6 +2605,9 @@
         ctx.textAlign='right';
         ctx.font="6px monospace";
         ctx.fillText("TOTALT "+this.totalSeagullHits, W-8, 32);
+        // Bossens hälsomätare + nedräkning - ligger i kubb-ikonraden (y
+        // 16-24), som annars alltid är tom i jaktläget (this.kubbs=[]).
+        if(this.boss && this.boss.phase === 'fight') this.drawBossHUD();
       } else if(this.phase==='king'){
         ctx.textAlign='center';
         ctx.fillStyle = PAL.darkest;
@@ -2215,6 +2627,48 @@
         }
       }
     }
+    // Hälsomätare + nedräkning för bossmåsen - GB-stil ram/fyllning precis
+    // som kraftmätaren (drawPower), plus en blinkande sifferklocka när tiden
+    // börjar bli knapp (samma "urgent"-mönster som tid-utmaningens TID ovan).
+    // Medan fenixen helar sig (b.isHealing, se updateBoss()) pulserar
+    // fyllningen guld/orange istället för den vanliga färgen, och en "+N HP"
+    // stiger och tonar ut ovanför mätaren - annars är det lätt att missa att
+    // hälsan faktiskt gick UPP mitt i striden, inte bara stod still.
+    drawBossHUD(){
+      const b = this.boss;
+      if(!b) return;
+      const ctx = this.ctx;
+      const barX = 34, barY = 17, barW = 92, barH = 7;
+      this.rect(barX-2, barY-2, barW+4, barH+4, PAL.darkest);
+      this.rect(barX, barY, barW, barH, PAL.light);
+      const pct = Math.max(0, b.hp/b.maxHp);
+      const healing = !!b.isHealing;
+      let fillColor = pct > 0.3 ? PAL.darkest : '#c1461f';
+      if(healing){
+        const pulse = Math.sin(b.healAnimT*12);
+        fillColor = pulse > 0 ? '#ffde59' : '#ffab00';
+      }
+      this.rect(barX, barY, barW*pct, barH, fillColor);
+      if(healing){
+        const p = Math.min(1, b.healAnimT / BOSS_PHOENIX_HEAL_ANIM_DUR);
+        ctx.save();
+        ctx.globalAlpha = 1 - p;
+        ctx.textAlign = 'center';
+        ctx.fillStyle = PAL.darkest;
+        ctx.font = "7px monospace";
+        ctx.fillText('+'+BOSS_PHOENIX_HEAL_AMOUNT+' HP', barX+barW*pct, barY-4-p*7);
+        ctx.restore();
+      }
+      ctx.textAlign='right';
+      ctx.fillStyle = PAL.darkest;
+      ctx.font = "6px monospace";
+      ctx.fillText('BOSS', barX-4, barY+6);
+      const urgent = b.timeLeft <= 5;
+      if(!urgent || Math.floor(this.msgClock*4)%2===0){
+        ctx.textAlign='left';
+        ctx.fillText(Math.ceil(b.timeLeft)+'S', barX+barW+4, barY+6);
+      }
+    }
 
     // ---- stämningsläge (lokalt läge) - eskalerar med rundan ----
     // 1-5: normalt · 6-10: natt · 11-15: berusad (svajande) · 16-19: psykedeliskt
@@ -2223,8 +2677,16 @@
     // aldrig, bara hur saker RITAS.
     getVisualStage(){
       if(this.matchType === 'online') return 'normal';
-      if(this.state === 'menu' || this.state === 'highscoreList') return 'normal';
-      if(this.round >= HELL_FROM_ROUND) return 'hell';
+      if(this.state === 'menu' || this.state === 'highscoreList' || this.state === 'achievements') return 'normal';
+      if(this.round >= HELL_FROM_ROUND){
+        // I jaktläget hålls stämningsläget kvar på "psykedeliskt" tills
+        // spelaren besegrat fiskmåskungen den här omgången - annars blir
+        // synligheten (eld + darrande kubbar, se applyStagePalette()) ett
+        // rent hinder mot en redan svårträffad boss. Övriga lägen eskalerar
+        // som vanligt, opåverkat.
+        if(this.gameMode === 'seagullhunt' && !this.hasDefeatedKingThisRun) return 'psychedelic';
+        return 'hell';
+      }
       if(this.round >= PSYCHEDELIC_FROM_ROUND) return 'psychedelic';
       if(this.round >= TIPSY_FROM_ROUND) return 'tipsy';
       if(this.round >= NIGHT_FROM_ROUND) return 'night';
@@ -2358,8 +2820,25 @@
           if(!kingFallen) this.drawKing(KING_X, KING_Y, false);
         }
       }
-      const gullPos = this.matchType === 'online' ? this.onlineSeagullPos() : this.seagullPos();
-      if(gullPos) this.drawSeagull(gullPos.x, gullPos.y, false, gullPos.dir);
+      if(this.boss && this.boss.phase === 'fight'){
+        if(this.boss.kind === 'phoenix'){
+          // Under den helande rörelsen används alltid sidoprofilen (den har
+          // glöd-/gnistr-effekten inbyggd, se drawPhoenixBoss) - annars
+          // samma framifrån/sidoprofil-växling som de andra bossarna.
+          if(!this.boss.isHealing && this.boss.facePlayer){
+            this.drawPhoenixBossFront(this.boss.x, this.boss.y, this.boss.flapPhase, this.boss.hitFlash > 0, false, 0);
+          } else {
+            this.drawPhoenixBoss(this.boss.x, this.boss.y, this.boss.dir, this.boss.hitFlash > 0, this.boss.isHealing, this.boss.healAnimT);
+          }
+        } else if(this.boss.facePlayer){
+          this.drawSeagullBossFront(this.boss.x, this.boss.y, this.boss.flapPhase, this.boss.hitFlash > 0, this.boss.kind === 'crown');
+        } else {
+          this.drawSeagullBoss(this.boss.x, this.boss.y, this.boss.dir, this.boss.hitFlash > 0, this.boss.kind === 'crown');
+        }
+      } else {
+        const gullPos = this.matchType === 'online' ? this.onlineSeagullPos() : this.seagullPos();
+        if(gullPos) this.drawSeagull(gullPos.x, gullPos.y, false, gullPos.dir);
+      }
       this.drawThrower();
     }
     drawSceneFrontal(){
@@ -2736,27 +3215,346 @@
       ctx.globalAlpha = 1;
       ctx.restore();
     }
+    // dizzy/dir styr det vanliga utseendet (yrvaken efter träff, flygriktning).
+    // Utöver det läser funktionen de globala trofé-togglarna direkt
+    // (this.trophyAngryOn/this.trophyKingOn/this.trophyPhoenixOn, se
+    // drawHighscoreList()) så ALLA vanliga fiskmåsar i spelet - inte bara den
+    // som råkar träffas - får argt ögonbryn, en liten krona respektive
+    // fenixens eld-features (omfärgad kropp, flammande vingspetsar, en liten
+    // flamtofs och glödande ögon) medan respektive toggle är på. Alla tre
+    // går att kombinera fritt med varandra.
     drawSeagull(x, y, dizzy, dir){
       const ctx = this.ctx;
       ctx.save();
       ctx.translate(Math.round(x), Math.round(y));
       if(dir === -1) ctx.scale(-1,1); // vänd fågeln så näbben pekar åt flygriktningen
       if(dizzy) ctx.rotate(Math.PI*0.92);
+      const fire = this.trophyPhoenixOn;
+      const bodyC = fire ? '#ff8a3d' : '#f4f4f4';
+      const wingC = fire ? '#ff4d1f' : '#c9c9c9';
       // kropp
-      this.rect(-8,-4,16,8, '#f4f4f4');
+      this.rect(-8,-4,16,8, bodyC);
       // vingar
-      this.rect(-15,-6,8,4, '#c9c9c9');
-      this.rect(7,-6,8,4, '#c9c9c9');
+      this.rect(-15,-6,8,4, wingC);
+      this.rect(7,-6,8,4, wingC);
+      if(fire){
+        // flammande vingspetsar - samma idé som på fenixbossen (drawPhoenixBoss),
+        // bara nedskalad till den lilla vanliga fiskmåsens storlek.
+        this.rect(-17,-7,4,3, '#ffde59');
+        this.rect(13,-7,4,3, '#ffde59');
+      }
       // huvud
-      this.rect(6,-9,7,7, '#f4f4f4');
+      this.rect(6,-9,7,7, bodyC);
       // näbb
       this.rect(13,-6,4,2, '#f2a53f');
+      if(fire) this.drawPhoenixCrest(9.5, -9, 2.5);
+      if(this.trophyKingOn) this.drawBossCrown(9.5, -9, 3.5);
+      const eyeC = fire ? '#ffe27a' : PAL.darkest;
       if(dizzy){
         // yrvakna kryss-ögon
-        this.rect(8,-8,1.4,1.4, PAL.darkest);
-        this.rect(10.6,-8,1.4,1.4, PAL.darkest);
+        this.rect(8,-8,1.4,1.4, eyeC);
+        this.rect(10.6,-8,1.4,1.4, eyeC);
+      } else if(this.trophyAngryOn){
+        // argt, neddraget ögonbryn - alltid mörkt, ÄVEN om fenix-elden också
+        // är på (annars skulle ilskan bli osynlig mot det ljusa, glödande
+        // eldsken-ögat, se eyeC ovan - de två effekterna ska gå att kombinera).
+        ctx.save();
+        ctx.translate(9.5,-8);
+        ctx.rotate(0.35);
+        this.rect(-2.5,-1,5,1.6, PAL.darkest);
+        ctx.restore();
+        this.rect(9,-6.4,1.4,1.4, PAL.darkest);
       } else {
-        this.rect(9,-7,1.4,1.4, PAL.darkest);
+        this.rect(9,-7,1.4,1.4, eyeC);
+      }
+      ctx.restore();
+    }
+    // En kraftig, tung siluett istället för den smala vanliga fiskmåsen -
+    // bred, rund mage, tjocka "muskel"-vingar och en grov, tjock hals/näbb.
+    // Mörkare, stenigare färgsättning än de ljusa vanliga måsarna gör att
+    // hon känns tyngre och starkare, inte bara större. flash=true (från
+    // b.hitFlash, se updateBoss) blänker kroppen vit ett ögonblick när ett
+    // kast landar, samma idé som PAL-blänket i drawKing.
+    // crowned=true ritar nästa boss-nivå: solglasögon och en liten krona -
+    // låses upp efter att man besegrat den vanliga bossen och sedan träffat
+    // BOSS_TRIGGER_HITS fler vanliga fiskmåsar, se startSeagullBoss().
+    drawSeagullBoss(x, y, dir, flash, crowned){
+      const ctx = this.ctx;
+      ctx.save();
+      ctx.translate(Math.round(x), Math.round(y));
+      if(dir === -1) ctx.scale(-1,1);
+      if(crowned) ctx.scale(BOSS_CROWN_VISUAL_SCALE, BOSS_CROWN_VISUAL_SCALE);
+      const body = flash ? '#ffffff' : '#f4f4f4';
+      const shade = flash ? '#f2f2f2' : '#d6d6d6';
+      const wing = flash ? '#f2f2f2' : '#b8b8b8';
+      // bred, rund mage - tyngd nedtill markeras med en mörkare skuggkant
+      this.rect(-24,-15,48,26, body);
+      this.rect(-24,7,48,6, shade);
+      // tjocka, muskulösa vingar (breda vid kroppen, inte smala/spetsiga)
+      this.rect(-42,-19,20,15, wing);
+      this.rect(22,-19,20,9, wing);
+      // grov hals rakt upp till ett stort, tungt huvud
+      this.rect(9,-31,19,21, body);
+      if(!crowned){
+        // tungt ögonbryn, vinklat så det lutar ner mot näbben - en argsint blick mot det den siktar på
+        ctx.save();
+        ctx.translate(19.5,-30);
+        ctx.rotate(0.32);
+        this.rect(-10.5,-3,21,6, PAL.darkest);
+        ctx.restore();
+      }
+      // grov, krokig näbb med tjock undernäbb
+      this.rect(27,-21,15,7, '#8a2f14');
+      this.rect(27,-14,10,4, '#5c1c0c');
+      if(crowned){
+        // klassiska "coola" solglasögon - en mörk lins plus en liten brygga
+        // som sticker ut mot näbben (det andra glaset syns förstås inte i
+        // sidoprofil), och en båge som sträcker sig bakåt mot huvudets
+        // bakkant - annars ser det bara ut som ett löst glas utan fäste.
+        this.rect(12,-27,11,6, '#1a1a1a');
+        this.rect(22,-25,3,2, '#1a1a1a');
+        this.rect(9,-26,3,3, '#1a1a1a');
+        this.drawBossCrown(18.5, -31, 9);
+      } else {
+        // litet, hårt öga
+        this.rect(15,-24,4,3, PAL.darkest);
+      }
+      ctx.restore();
+    }
+    // Enkel pixel-krona som sitter ovanpå bossens huvud - cx = mitten i x-led,
+    // topY = huvudets överkant (kronans bas placeras precis där). Tre
+    // fristående, spetsiga piggar (mittenpiggen högst) ovanpå ett bas-band,
+    // med tydliga luckor emellan och en pixel-trappa som smalnar av mot
+    // toppen (se drawCrownSpike) - annars smälter piggarna ihop till en
+    // enda blobbig klump istället för att läsas som en krona.
+    drawBossCrown(cx, topY, halfWidth){
+      const bandH = halfWidth*0.4;
+      const bandY = topY - bandH;
+      // bas-bandet kronan vilar på
+      this.rect(cx-halfWidth, bandY, halfWidth*2, bandH, '#f2c94c');
+      // tre piggar, jämnt fördelade med luckor emellan så de syns var för sig
+      const spikeW = halfWidth*0.5;
+      this.drawCrownSpike(cx - halfWidth*0.62, bandY, halfWidth*1.1, spikeW, '#f2c94c');
+      this.drawCrownSpike(cx,                  bandY, halfWidth*1.6, spikeW, '#f2c94c');
+      this.drawCrownSpike(cx + halfWidth*0.62, bandY, halfWidth*1.1, spikeW, '#f2c94c');
+      // liten röd ädelsten mitt på bandet
+      this.rect(cx-bandH*0.5, bandY+bandH*0.15, bandH, bandH*0.7, '#d94f4f');
+    }
+    // En enda spetsig krontagg, byggd av tre allt smalare rader (en enkel
+    // pixel-trappa) istället för en fylld triangel - matchar spelets
+    // blockiga, kantiga pixelstil (inga diagonala/antialisade kanter någon
+    // annanstans i grafiken). cx = taggens mitt, baseY = var taggens bas
+    // sitter (kronans bandöverkant), height/width = taggens mått.
+    drawCrownSpike(cx, baseY, height, width, color){
+      const rowH = height/3;
+      this.rect(cx-width/2,     baseY-rowH,      width,      rowH, color);      // bas
+      this.rect(cx-width*0.28,  baseY-rowH*2,     width*0.56, rowH, color);      // mitten
+      this.rect(cx-width*0.12,  baseY-height,     width*0.24, rowH, color);      // spets
+    }
+    // Enkel pixel-flamtofs som sitter ovanpå ett huvud - fenixens motsvarighet
+    // till drawBossCrown ovan. cx = mitten i x-led, topY = huvudets överkant
+    // (tofsens bas placeras precis där). Används både på den lilla vanliga
+    // fiskmåsen (se drawSeagull, this.trophyPhoenixOn) och på fenixens egen
+    // troféikon (se drawPhoenixTrophyFace).
+    drawPhoenixCrest(cx, topY, halfWidth){
+      const w = halfWidth*0.7;
+      this.rect(cx-halfWidth, topY-halfWidth*1.1, w, halfWidth*1.7, '#ffde59');
+      this.rect(cx-w/2, topY-halfWidth*1.6, w, halfWidth*2.2, '#ffde59');
+      this.rect(cx+halfWidth-w, topY-halfWidth*1.1, w, halfWidth*1.7, '#ffde59');
+    }
+    // Litet troféansikte som visas på highscore-fliken (se drawHighscoreList())
+    // - miniatyrhuvud med argt, neddraget ögonbryn (crowned=false) för att ha
+    // besegrat bossmåsen, eller lugna ögon och en liten krona (crowned=true,
+    // samma drawBossCrown som bossens egna huvud använder) för att ha
+    // besegrat fiskmåskungen. De två ritas som separata, oberoende ikoner
+    // sida vid sida i drawHighscoreList(), inte som samma ikon som byter
+    // utseende. Ritas kring origo - anropande kod sköter translate/scale.
+    drawBossTrophyFace(crowned){
+      // huvud
+      this.rect(-8,-7,16,14, '#f4f4f4');
+      this.rect(-8,3,16,4, '#d6d6d6');
+      // näbb
+      this.rect(5,-3,6,4, '#8a2f14');
+      this.rect(5,1,4,2, '#5c1c0c');
+      if(crowned){
+        // lugna, runda ögon - ilskan är borta nu när hon väl blivit besegrad
+        this.rect(-4,-3,2,2, PAL.darkest);
+        this.rect(1,-3,2,2, PAL.darkest);
+        this.drawBossCrown(0, -7, 5);
+      } else {
+        // argt, neddraget ögonbryn
+        const ctx = this.ctx;
+        ctx.save();
+        ctx.translate(-1,-5);
+        ctx.rotate(0.3);
+        this.rect(-5,-2,9,3, PAL.darkest);
+        ctx.restore();
+        this.rect(-3,-2,2,2, PAL.darkest);
+      }
+    }
+    // Tredje troféikonen, för fenixen - eget litet miniatyrhuvud i
+    // eld-paletten (samma färger som drawPhoenixBoss) med glödande ögon och
+    // en liten flamtofs (drawPhoenixCrest). Ritas som en egen, oberoende
+    // ikon bredvid de två ovan i drawHighscoreList(), inte som ett tredje
+    // läge på drawBossTrophyFace - fenixens palett skiljer sig för mycket
+    // från de vita måsarnas för att dela samma bas-rects naturligt.
+    drawPhoenixTrophyFace(){
+      // eldfärgat huvud
+      this.rect(-8,-7,16,14, '#ff8a3d');
+      this.rect(-8,3,16,4, '#ffc24d');
+      // näbb
+      this.rect(5,-3,6,4, '#8a2f14');
+      this.rect(5,1,4,2, '#5c1c0c');
+      // glödande ögon
+      this.rect(-4,-3,2,2, '#ffe27a');
+      this.rect(1,-3,2,2, '#ffe27a');
+      // liten flamtofs
+      this.drawPhoenixCrest(0, -7, 4);
+    }
+    // Bossen rakt framifrån, med båda vingarna flaxande häftigt upp och ner
+    // - används medan b.facePlayer är true (se updateBoss()). wingPhase är
+    // en stigande klocka som bara går medan hon flaxar, så vingarna alltid
+    // startar i viloläge när hon vänder sig mot spelaren igen. Samma
+    // kraftiga, breda kroppsbyggnad som sidoprofilen ovan.
+    // crowned=true (se drawSeagullBoss ovan) lägger till solglasögon och krona.
+    drawSeagullBossFront(x, y, wingPhase, flash, crowned){
+      const ctx = this.ctx;
+      ctx.save();
+      ctx.translate(Math.round(x), Math.round(y));
+      if(crowned) ctx.scale(BOSS_CROWN_VISUAL_SCALE, BOSS_CROWN_VISUAL_SCALE);
+      const body = flash ? '#ffffff' : '#f4f4f4';
+      const shade = flash ? '#f2f2f2' : '#d6d6d6';
+      const wing = flash ? '#f2f2f2' : '#b8b8b8';
+      const flap = Math.abs(Math.sin(wingPhase)); // 0 (nere) .. 1 (uppe), snabbt fram och tillbaka
+      // breda, tjocka vingar som flaxar
+      this.rect(-40, -15-flap*11, 20, 12, wing);
+      this.rect(20, -15-flap*11, 20, 12, wing);
+      // bred, rund mage, rakt fram
+      this.rect(-18,-15,36,27, body);
+      this.rect(-18,9,36,4, shade);
+      // tjockt, tungt huvud
+      this.rect(-13,-33,26,21, body);
+      if(!crowned){
+        // två ögonbryn, vinklade inåt mot mitten (inre kant lägre, yttre kant
+        // högre) så de bildar en ilsken, ihopdragen rynka rakt framifrån
+        ctx.save();
+        ctx.translate(-7.5,-32);
+        ctx.rotate(0.35);
+        this.rect(-6.5,-3,13,6, PAL.darkest);
+        ctx.restore();
+        ctx.save();
+        ctx.translate(7.5,-32);
+        ctx.rotate(-0.35);
+        this.rect(-6.5,-3,13,6, PAL.darkest);
+        ctx.restore();
+      }
+      if(crowned){
+        // klassiska "coola" solglasögon - två mörka glas som sitter ihop
+        // med en brygga i mitten, plus bågar som sträcker sig ut till
+        // huvudets kanter - annars ser det bara ut som två lösa ögon med
+        // en liten bit emellan istället för riktiga glasögon.
+        this.rect(-11,-28,9,7, '#1a1a1a');  // vänster glas
+        this.rect(2,-28,9,7, '#1a1a1a');    // höger glas
+        this.rect(-2,-27,4,3, '#1a1a1a');   // bryggan som binder ihop dem
+        this.rect(-13,-26,2,5, '#1a1a1a');  // vänster båge, ut mot huvudets kant
+        this.rect(11,-26,2,5, '#1a1a1a');   // höger båge, ut mot huvudets kant
+        this.drawBossCrown(0, -33, 10);
+      } else {
+        // arga ögon
+        this.rect(-9,-27,4,3, PAL.darkest);
+        this.rect(5,-27,4,3, PAL.darkest);
+      }
+      // grov, tjock näbb
+      this.rect(-6,-13,12,8, '#8a2f14');
+      ctx.restore();
+    }
+    // ---- Fenixfågeln (kind==='phoenix', se startSeagullBoss): tredje
+    // boss-nivån i eldläget. Samma kroppsbyggnad/pose-mönster som den vanliga
+    // bossmåsen (sidoprofil + framifrån-flax), men eldfärgad med flammande
+    // vingspetsar, en flamkrona på huvudet och en lång eldsvans. healing=true
+    // (från b.isHealing, se updateBoss) låter henne glöda i varmare
+    // guld/vitt och lägger en pulserande stjärnglöd kring kroppen medan hon
+    // helar sig - healPhase (b.healAnimT) styr pulsens takt.
+    drawPhoenixBoss(x, y, dir, flash, healing, healPhase){
+      const ctx = this.ctx;
+      ctx.save();
+      ctx.translate(Math.round(x), Math.round(y));
+      if(dir === -1) ctx.scale(-1,1);
+      const body = flash ? '#ffffff' : (healing ? '#fff3c4' : '#ff8a3d');
+      const belly = flash ? '#f2f2f2' : (healing ? '#ffe27a' : '#ffc24d');
+      const wing = flash ? '#f2f2f2' : (healing ? '#ffcf6b' : '#ff4d1f');
+      const wingTip = flash ? '#e0e0e0' : (healing ? '#fff0b0' : '#ffde59');
+      const tailC = flash ? '#f2f2f2' : (healing ? '#ffd77a' : '#e8380d');
+      // lång flammande svans bakom kroppen
+      this.rect(-46,-9,24,7, tailC);
+      this.rect(-40,-14,16,5, wingTip);
+      this.rect(-40,-2,16,5, tailC);
+      // bred, rund mage
+      this.rect(-24,-15,48,26, body);
+      this.rect(-24,7,48,6, belly);
+      // flammande vingar - avsmalnande mot spetsen så de känns eldtungeaktiga
+      this.rect(-38,-21,22,13, wing);
+      this.rect(-32,-27,14,8, wingTip);
+      this.rect(20,-19,20,9, wing);
+      this.rect(24,-25,12,7, wingTip);
+      // grov hals rakt upp till huvudet
+      this.rect(9,-31,19,21, body);
+      // liten flamkrona ovanpå huvudet
+      this.rect(15,-38,4,8, wingTip);
+      this.rect(20,-40,4,10, wingTip);
+      this.rect(24,-37,4,7, wingTip);
+      // grov, krokig näbb med tjock undernäbb
+      this.rect(27,-21,15,7, '#8a2f14');
+      this.rect(27,-14,10,4, '#5c1c0c');
+      // glödande öga
+      this.rect(15,-24,4,3, healing ? '#fff3c4' : '#ffe27a');
+      if(healing){
+        const pulse = 0.5 + 0.5*Math.sin(healPhase*10);
+        ctx.save();
+        ctx.globalAlpha = 0.45 + pulse*0.35;
+        ctx.fillStyle = '#fff3c4';
+        this.drawStar(0,-8,28,13,6);
+        ctx.restore();
+      }
+      ctx.restore();
+    }
+    // Fenixen rakt framifrån, båda vingarna flaxande - används medan
+    // b.facePlayer är true (se drawPhoenixBoss ovan för övriga kommentarer).
+    drawPhoenixBossFront(x, y, wingPhase, flash, healing, healPhase){
+      const ctx = this.ctx;
+      ctx.save();
+      ctx.translate(Math.round(x), Math.round(y));
+      const body = flash ? '#ffffff' : (healing ? '#fff3c4' : '#ff8a3d');
+      const belly = flash ? '#f2f2f2' : (healing ? '#ffe27a' : '#ffc24d');
+      const wing = flash ? '#f2f2f2' : (healing ? '#ffcf6b' : '#ff4d1f');
+      const wingTip = flash ? '#e0e0e0' : (healing ? '#fff0b0' : '#ffde59');
+      const flap = Math.abs(Math.sin(wingPhase));
+      // flammande vingar som flaxar
+      this.rect(-40, -15-flap*11, 20, 12, wing);
+      this.rect(-36, -22-flap*11, 12, 8, wingTip);
+      this.rect(20, -15-flap*11, 20, 12, wing);
+      this.rect(24, -22-flap*11, 12, 8, wingTip);
+      // bred, tjock mage rakt fram
+      this.rect(-18,-15,36,27, body);
+      this.rect(-18,9,36,4, belly);
+      // huvud
+      this.rect(-13,-33,26,21, body);
+      // flamkrona
+      this.rect(-4,-40,4,8, wingTip);
+      this.rect(0,-42,4,10, wingTip);
+      this.rect(4,-40,4,7, wingTip);
+      // glödande ögon
+      this.rect(-9,-27,4,3, healing ? '#fff3c4' : '#ffe27a');
+      this.rect(5,-27,4,3, healing ? '#fff3c4' : '#ffe27a');
+      // grov, tjock näbb
+      this.rect(-6,-13,12,8, '#8a2f14');
+      if(healing){
+        const pulse = 0.5 + 0.5*Math.sin(healPhase*10);
+        ctx.save();
+        ctx.globalAlpha = 0.45 + pulse*0.35;
+        ctx.fillStyle = '#fff3c4';
+        this.drawStar(0,-6,28,13,6);
+        ctx.restore();
       }
       ctx.restore();
     }
@@ -2847,7 +3645,10 @@
         this.kingFallAnim = null;
         if(onDone === 'gameover') this.endGame();
         else if(onDone === 'online') this.finalizeOnlineThrow();
-        else this.state = 'roundclear';
+        else {
+          this.incrementRoundsClearedTotal();
+          this.state = 'roundclear';
+        }
       }
     }
     drawKingFallScene(){
@@ -2863,12 +3664,18 @@
         const ctx = this.ctx;
         const p = Math.min(1, a.t/a.dur);
         const fallY = a.y + p*34; // måsen daskar snurrigt nedåt
-        this.drawSeagull(a.x, fallY, true, a.dir);
-        // yrande stjärnor kring huvudet
+        if(a.boss){
+          if(a.bossKind === 'phoenix') this.drawPhoenixBoss(a.x, fallY, a.dir, false, false, 0);
+          else this.drawSeagullBoss(a.x, fallY, a.dir, false, a.bossKind === 'crown');
+        }
+        else this.drawSeagull(a.x, fallY, true, a.dir);
+        // yrande stjärnor kring huvudet - bossen får ett par extra, hon är
+        // trots allt en hel del större att bli yr av.
+        const starCount = a.boss ? 5 : 3;
         ctx.save();
         ctx.translate(a.x, fallY-12);
-        for(let i=0;i<3;i++){
-          const ang = a.t*6 + i*(Math.PI*2/3);
+        for(let i=0;i<starCount;i++){
+          const ang = a.t*6 + i*(Math.PI*2/starCount);
           ctx.save();
           ctx.translate(Math.cos(ang)*9, Math.sin(ang)*9*0.5);
           ctx.fillStyle = PAL.darkest;
@@ -2877,7 +3684,8 @@
         }
         ctx.restore();
         // lösa fjädrar som singlar ner
-        for(let i=0;i<3;i++){
+        const featherCount = a.boss ? 5 : 3;
+        for(let i=0;i<featherCount;i++){
           const drip = (a.t*36 + i*15) % 30;
           this.rect(a.x-6+i*6, a.y+drip, 2,3, i%2===0 ? PAL.darkest : PAL.dark);
         }
@@ -3061,6 +3869,116 @@
         this._decoSeagullBox = { x: bx, y: by, w: boxW, h: boxH };
       } else {
         this._decoSeagullBox = null;
+      }
+    }
+    // ---- achievements-flik: de upplåsta troféhuvud-ikonerna, flyttade hit
+    // från highscore-listan så de inte tar plats där (se drawHighscoreList()),
+    // samt en liten livstidsstatistik-sektion därunder (se
+    // incrementSeagullTotalHits()/incrementRoundsClearedTotal()/
+    // incrementOnlineWins()/incrementOnlineLosses()). Ikonerna radas ut med
+    // gott om plats mellan sig, en rad text nedanför förklarar vad var och en
+    // gör. Den första (argt ögonbryn) dyker upp sedan bossmåsen besegrats
+    // minst en gång, den andra (krönt) läggs till separat sedan
+    // fiskmåskungen också besegrats, och den tredje (eldig) läggs till sist
+    // sedan fenixen också besegrats - se markBossDefeatedEver()/
+    // markBossKingDefeatedEver()/markBossPhoenixDefeatedEver() i
+    // onBossDefeated(). Alla tre går att togglea på/av var för sig (A-knapp
+    // eller direkt klick, se bindInput()) - när på blir ALLA vanliga
+    // fiskmåsar i spelet arga, krönta respektive eldiga, se drawSeagull().
+    // Avstängd ikon tonas ner, aktiv ikon får en ram runt sig, precis som
+    // tidigare på highscore-listan.
+    drawAchievements(){
+      this.rect(0,0,W,H, PAL.lightest);
+      const ctx = this.ctx;
+      ctx.textAlign='center';
+      ctx.fillStyle = PAL.darkest;
+      ctx.font = "10px monospace";
+      ctx.fillText("ACHIEVEMENTS", W/2, 12);
+
+      const trophies = [
+        { id:'trophyAngry',   boxKey:'_decoTrophyAngryBox',   unlocked:this.hasDefeatedBossEver,        on:this.trophyAngryOn,   label:'FISKMÅSBOSSEN',  draw:()=>this.drawBossTrophyFace(false) },
+        { id:'trophyKing',    boxKey:'_decoTrophyKingBox',    unlocked:this.hasDefeatedBossKingEver,    on:this.trophyKingOn,    label:'FISKMÅSKUNGEN',  draw:()=>this.drawBossTrophyFace(true) },
+        { id:'trophyPhoenix', boxKey:'_decoTrophyPhoenixBox', unlocked:this.hasDefeatedBossPhoenixEver, on:this.trophyPhoenixOn, label:'FENIXEN',        draw:()=>this.drawPhoenixTrophyFace() }
+      ];
+      const unlockedCount = trophies.filter(tr=>tr.unlocked).length;
+
+      // y-markören flyttas nedåt allteftersom sektionerna ritas, så
+      // stat-blocket alltid hamnar direkt under trofé-sektionen oavsett hur
+      // hög/låg den blev (tom, eller med ikonraden).
+      let y = 18;
+      if(unlockedCount === 0){
+        ctx.font = "6px monospace";
+        ctx.fillText("INGA TROFÉER ÄNNU", W/2, y+8);
+        ctx.font = "5px monospace";
+        ctx.fillStyle = PAL.dark;
+        ctx.fillText("BESEGRA FISKMÅSBOSSAR I JAKTLÄGET", W/2, y+18);
+        y += 26;
+      } else {
+        const boxW = 30, boxH = 26, gap = 8;
+        const totalW = trophies.length*boxW + (trophies.length-1)*gap;
+        const startX = W/2 - totalW/2;
+        trophies.forEach((tr,i)=>{
+          if(!tr.unlocked){ this[tr.boxKey] = null; return; }
+          const bx = startX + i*(boxW+gap), by = y;
+          const cx = bx + boxW/2, cy = by + boxH/2;
+          const focused = this.achievementFocus === tr.id;
+          this.rect(bx, by, boxW, boxH, PAL.darkest);
+          this.rect(bx+1, by+1, boxW-2, boxH-2, focused ? PAL.dark : PAL.lightest);
+          ctx.save();
+          ctx.globalAlpha = tr.on ? 1 : 0.4;
+          ctx.translate(cx, cy);
+          ctx.scale(0.9, 0.9);
+          tr.draw();
+          ctx.restore();
+          ctx.textAlign='center';
+          ctx.font = "4px monospace";
+          ctx.fillStyle = PAL.darkest;
+          ctx.fillText(tr.label, cx, by+boxH+7);
+          ctx.fillStyle = PAL.dark;
+          ctx.fillText(tr.on ? 'PÅ' : 'AV', cx, by+boxH+13);
+          this[tr.boxKey] = { x: bx, y: by, w: boxW, h: boxH };
+        });
+        y += boxH + 16;
+
+        ctx.textAlign='center';
+        ctx.font = "5px monospace";
+        ctx.fillStyle = PAL.dark;
+        ctx.fillText("A = SLÅ PÅ/AV VALD TROFÉ", W/2, y);
+        y += 8;
+      }
+
+      // ---- livstidsstatistik ----
+      y += 4;
+      ctx.textAlign='center';
+      ctx.fillStyle = PAL.darkest;
+      ctx.font = "6px monospace";
+      ctx.fillText("STATISTIK", W/2, y);
+      y += 4;
+      this.rect(W/2-55, y, 110, 1, PAL.dark);
+      y += 8;
+
+      const stats = [
+        { label:'FISKMÅSAR JAGADE',      value: this.totalSeagullHits },
+        { label:'RUNDOR KLARADE',        value: this.totalRoundsCleared },
+        { label:'ONLINEMATCHER VUNNA',      value: this.totalOnlineWins },
+        { label:'ONLINEMATCHER FÖRLORADE',  value: this.totalOnlineLosses }
+      ];
+      const rowH = 9;
+      stats.forEach((s,i)=>{
+        const sy = y + i*rowH;
+        ctx.textAlign='left';
+        ctx.font = "6px monospace";
+        ctx.fillStyle = PAL.darkest;
+        ctx.fillText(s.label, W/2-55, sy);
+        ctx.textAlign='right';
+        ctx.fillText(String(s.value), W/2+55, sy);
+      });
+
+      ctx.textAlign='center';
+      if(Math.floor(this.msgClock*2)%2===0){
+        ctx.fillStyle = PAL.darkest;
+        ctx.font = "6px monospace";
+        ctx.fillText("←→/SEL = BYT · A = TILLBAKA", W/2, 138);
       }
     }
     drawConfirmQuit(){
@@ -3262,6 +4180,17 @@
         }
       }
 
+      // Bossmåsens nedräkning - ticker bara medan striden faktiskt pågår
+      // (samma ACTIVE_STATES-mönster som tid-utmaningens klocka ovan), inte
+      // i menyer eller under besegrad-animationen (dess phase är då redan
+      // 'defeated', se triggerBossHit).
+      if(this.gameMode === 'seagullhunt' && this.boss && this.boss.phase === 'fight' && ACTIVE_STATES.has(this.state)){
+        this.boss.timeLeft = Math.max(0, this.boss.timeLeft - dt);
+        if(this.boss.timeLeft <= 0){
+          this.loseSeagullBoss();
+        }
+      }
+
       const ctx = this.ctx;
       // Stämningsläget (natt/berusad/psykedeliskt/helvete) räknas fram en
       // gång per frame - både paletten och svaj-effekten nedan, plus
@@ -3308,7 +4237,7 @@
       // TIMINGEN på kraft-tryckningen som avgör om man råkar sikta rätt in i
       // henne, inte vad hon sedan hinner göra under själva kastanimationen.
       if(this.matchType !== 'online' && (this.state === 'aim' || this.state === 'power')){
-        this.updateSeagull(dt);
+        if(this.boss) this.updateBoss(dt); else this.updateSeagull(dt);
       }
 
       if(this.state === 'menu'){
@@ -3354,6 +4283,8 @@
         this.drawNameEntry();
       } else if(this.state === 'highscoreList'){
         this.drawHighscoreList();
+      } else if(this.state === 'achievements'){
+        this.drawAchievements();
       } else if(this.state === 'confirmQuit'){
         this.drawConfirmQuit();
       } else if(this.state === 'roomCodeEntry'){
