@@ -228,10 +228,15 @@
     display:flex; align-items:center; justify-content:center;
   }
   body.fullscreen-mode .screen-label{ display:none; }
+  /* Bredd/höjd sätts numera med JS (se resizeFullscreenCanvas) istället för
+     100vw/100vh + object-fit:contain - canvas-elementets stöd för
+     object-fit är inte tillförlitligt över alla mobila webbläsare, och
+     100vh matchar inte alltid den FAKTISKT synliga ytan på mobil (räknar
+     inte alltid bort adressfältet). Genom att sätta canvasens EGNA
+     bredd/höjd i pixlar exakt till det den verkligen visar blir varje
+     tryckkoordinat korrekt utan någon separat brevlådnings-uträkning. */
   body.fullscreen-mode #gameCanvas{
-    width:100vw; height:100vh;
     max-width:100vw; max-height:100vh;
-    object-fit:contain;
     border-radius:0;
     background:#9bbc0f;
   }
@@ -2958,11 +2963,43 @@
     const btn = document.getElementById('viewToggle');
     const canvas = document.getElementById('gameCanvas');
 
+    // Räknar ut och sätter canvasens EGEN bredd/höjd (i verkliga pixlar) så
+    // att den fyller så mycket som möjligt av den faktiskt synliga ytan med
+    // bevarad bildproportion (160:144) - manuellt, istället för CSS
+    // object-fit (opålitligt stöd för <canvas> över olika mobila
+    // webbläsare). window.innerWidth/innerHeight används istället för
+    // 100vw/100vh eftersom de speglar den FAKTISKT synliga ytan på mobil
+    // (100vh missar ofta att räkna bort adressfältet). Efter detta är
+    // canvasens getBoundingClientRect() exakt lika med det man faktiskt
+    // ser, så tryckkoordinater kan räknas om rakt av utan någon separat
+    // brevlådnings-uträkning i clientToGameCoords.
+    function resizeFullscreenCanvas(){
+      if(!canvas) return;
+      if(!document.body.classList.contains('fullscreen-mode')){
+        canvas.style.width = ''; canvas.style.height = '';
+        return;
+      }
+      // visualViewport speglar den FAKTISKT synliga ytan dynamiskt (t.ex.
+      // krymper när mobilens adressfält visas) - innerWidth/innerHeight
+      // uppdateras inte alltid lika pålitligt på alla mobila webbläsare,
+      // så vi föredrar visualViewport när den finns.
+      const vv = window.visualViewport;
+      const vw = vv ? vv.width : window.innerWidth;
+      const vh = vv ? vv.height : window.innerHeight;
+      const gameAspect = W/H;
+      let cw, ch;
+      if(vw/vh > gameAspect){ ch = vh; cw = ch*gameAspect; }
+      else { cw = vw; ch = cw/gameAspect; }
+      canvas.style.width = Math.round(cw)+'px';
+      canvas.style.height = Math.round(ch)+'px';
+    }
+
     function apply(mode){
       document.body.classList.toggle('fullscreen-mode', mode === 'fullscreen');
       if(btn){
         btn.title = mode === 'fullscreen' ? 'Visa Game Boy (F)' : 'Helskärm, bara skärmen (F)';
       }
+      resizeFullscreenCanvas();
     }
     function toggle(){
       const next = document.body.classList.contains('fullscreen-mode') ? 'device' : 'fullscreen';
@@ -2974,6 +3011,12 @@
     // fortfarande växla till Game Boy-vyn under sessionen (F eller ⛶),
     // det återställs bara vid nästa sidladdning.
     apply('fullscreen');
+
+    window.addEventListener('resize', resizeFullscreenCanvas);
+    window.addEventListener('orientationchange', resizeFullscreenCanvas);
+    // visualViewport fångar t.ex. mobilens adressfält som visas/döljs vid
+    // scroll - vanlig "resize" hinner inte alltid med det på egen hand.
+    if(window.visualViewport) window.visualViewport.addEventListener('resize', resizeFullscreenCanvas);
 
     if(btn) btn.addEventListener('click', toggle);
     window.addEventListener('keydown', (e)=>{
@@ -2989,39 +3032,17 @@
     if(canvas){
       // Räknar om en punkt i webbläsarens pixlar (clientX/Y) till spelets
       // egna 160x144-koordinater - samma koordinatsystem som all ritkod
-      // (this.rect, drawMenu m.fl.) använder.
-      //
-      // VIKTIGT: canvasens CSS-box i helskärmsläge är hela viewporten
-      // (width:100vw;height:100vh), men bilden ritas med object-fit:contain
-      // - bevarad bildproportion, brevlådad upptill/nedtill eller i sidled
-      // beroende på skärmens proportioner (nästan alltid fallet på en
-      // telefon, som är mycket smalare/högre än spelets 160:144). Att bara
-      // skala mot HELA boxen (som förut) gav ett systematiskt fel - t.ex.
-      // landade ett tryck på "SPELA LOKALT" på "ONLINE-DUELL" istället. Vi
-      // måste räkna ut den faktiskt SYNLIGA bildrutan innanför brevlådningen
-      // först.
+      // (this.rect, drawMenu m.fl.) använder. Enkel rak omräkning: sedan
+      // resizeFullscreenCanvas() satts upp ovan sätter vi canvasens EGEN
+      // bredd/höjd exakt till vad som faktiskt syns (ingen CSS-brevlådning
+      // kvar att kompensera för), så getBoundingClientRect() = den synliga
+      // bildrutan rakt av.
       function clientToGameCoords(clientX, clientY){
         const rect = canvas.getBoundingClientRect();
         if(rect.width <= 0 || rect.height <= 0) return {x:W/2, y:H/2};
-        const boxAspect = rect.width / rect.height;
-        const gameAspect = W / H;
-        let contentW, contentH, offsetX, offsetY;
-        if(boxAspect > gameAspect){
-          // boxen är bredare än spelet - brevlådad i sidled (pelare vänster/höger)
-          contentH = rect.height;
-          contentW = contentH * gameAspect;
-          offsetX = (rect.width - contentW) / 2;
-          offsetY = 0;
-        } else {
-          // boxen är smalare/högre än spelet - brevlådad upptill/nedtill (vanligast på telefon)
-          contentW = rect.width;
-          contentH = contentW / gameAspect;
-          offsetX = 0;
-          offsetY = (rect.height - contentH) / 2;
-        }
         return {
-          x: ((clientX - rect.left - offsetX) / contentW) * W,
-          y: ((clientY - rect.top - offsetY) / contentH) * H
+          x: (clientX - rect.left) * (W/rect.width),
+          y: (clientY - rect.top) * (H/rect.height)
         };
       }
 
