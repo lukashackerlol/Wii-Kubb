@@ -138,6 +138,31 @@
      enhetsvyn där den fysiska HOME-knappen redan syns. */
   body:not(.fullscreen-mode) .pause-toggle{ display:none; }
 
+  /* ---- textinmatning (namn/rumskod) med riktigt tangentbord ---- */
+  .text-entry-overlay{
+    position:fixed; left:50%; bottom:6%; transform:translateX(-50%);
+    z-index:60; display:flex; gap:8px; align-items:center;
+  }
+  .text-entry-overlay[hidden]{ display:none; }
+  .text-entry-input{
+    font-family:'Courier New', monospace;
+    font-size:16px; letter-spacing:4px; text-transform:uppercase;
+    background:#0f380f; color:#9bbc0f;
+    border:2px solid #9bbc0f; border-radius:6px;
+    padding:8px 6px 8px 12px; width:9em; text-align:center;
+    outline:none;
+    box-shadow:0 3px 0 #062206;
+  }
+  .text-entry-input::placeholder{ color:#4f7a2f; letter-spacing:1px; }
+  .text-entry-done{
+    font-family:'Courier New', monospace; font-weight:bold;
+    background:#306230; color:#e7ffb0;
+    border:none; border-radius:6px; padding:10px 16px; font-size:13px; letter-spacing:1px;
+    cursor:pointer;
+    box-shadow:0 3px 0 #1a3a1a;
+  }
+  .text-entry-done:active{ transform:translateY(2px); box-shadow:0 1px 0 #1a3a1a; }
+
   /* ---- kontrollguide (overlay-panel) ---- */
   .help-overlay{
     position:fixed; inset:0; z-index:100;
@@ -251,16 +276,26 @@
 <button id="helpToggle" class="corner-btn help-toggle" title="Kontrollguide (H)" aria-label="Kontrollguide">?</button>
 <button id="pauseToggle" class="corner-btn pause-toggle" title="Meny (Esc)" aria-label="Meny">☰</button>
 
+<!-- Riktigt textfält för namn/rumskod - ger telefonens vanliga tangentbord
+     istället för att behöva bläddra fram bokstav för bokstav. Håller sig
+     synkad med (och kan användas tillsammans med) den gamla bläddra-UI:n på
+     själva skärmen - se textEntry-skriptet längst ner. -->
+<div id="textEntryOverlay" class="text-entry-overlay" hidden>
+  <input id="textEntryInput" class="text-entry-input" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false">
+  <button id="textEntryDone" class="text-entry-done">KLAR</button>
+</div>
+
 <div id="helpOverlay" class="help-overlay" hidden>
   <div class="help-panel">
     <h2>KONTROLLER</h2>
     <ul>
       <li><b>A / Tryck på skärmen</b>Bekräfta, lås sikte/kraft, kasta, välj i menyer</li>
       <li><b>B</b>Slå av/på ljud och musik</li>
-      <li><b>Piltangenter</b>Byt läge i menyer, skriv in namn eller rumskod, byt flik i highscore</li>
+      <li><b>Piltangenter</b>Byt läge i menyer, byt flik i highscore, eller bläddra bokstav för bokstav i namn/rumskod</li>
+      <li><b>Namn & rumskod</b>Det går också att skriva rakt av i textfältet som dyker upp - då används telefonens/datorns vanliga tangentbord</li>
       <li><b>Esc / ☰</b>Pausa och avbryt en pågående omgång eller match</li>
       <li><b>F / ⛶</b>Växla mellan helskärm och Game Boy-vyn</li>
-      <li><b>På pekskärm i helskärmsläge</b>Svep i en riktning istället för piltangenter, och håll fingret kvar en liten stund för START (t.ex. för att skriva klart ett namn eller gå med i ett rum)</li>
+      <li><b>På pekskärm i helskärmsläge</b>Svep i en riktning istället för piltangenter, och håll fingret kvar en liten stund för START</li>
       <li><b>🐦 I online-duell</b>Flyger en fiskmås förbi ibland - vem som helst kan trycka A för att försöka fånga den, oavsett vems tur det är. Den som är snabbast får ett extra kast nästa gång det blir hens tur.</li>
     </ul>
     <button id="helpClose">STÄNG</button>
@@ -2955,12 +2990,38 @@
       // Räknar om en punkt i webbläsarens pixlar (clientX/Y) till spelets
       // egna 160x144-koordinater - samma koordinatsystem som all ritkod
       // (this.rect, drawMenu m.fl.) använder.
+      //
+      // VIKTIGT: canvasens CSS-box i helskärmsläge är hela viewporten
+      // (width:100vw;height:100vh), men bilden ritas med object-fit:contain
+      // - bevarad bildproportion, brevlådad upptill/nedtill eller i sidled
+      // beroende på skärmens proportioner (nästan alltid fallet på en
+      // telefon, som är mycket smalare/högre än spelets 160:144). Att bara
+      // skala mot HELA boxen (som förut) gav ett systematiskt fel - t.ex.
+      // landade ett tryck på "SPELA LOKALT" på "ONLINE-DUELL" istället. Vi
+      // måste räkna ut den faktiskt SYNLIGA bildrutan innanför brevlådningen
+      // först.
       function clientToGameCoords(clientX, clientY){
         const rect = canvas.getBoundingClientRect();
         if(rect.width <= 0 || rect.height <= 0) return {x:W/2, y:H/2};
+        const boxAspect = rect.width / rect.height;
+        const gameAspect = W / H;
+        let contentW, contentH, offsetX, offsetY;
+        if(boxAspect > gameAspect){
+          // boxen är bredare än spelet - brevlådad i sidled (pelare vänster/höger)
+          contentH = rect.height;
+          contentW = contentH * gameAspect;
+          offsetX = (rect.width - contentW) / 2;
+          offsetY = 0;
+        } else {
+          // boxen är smalare/högre än spelet - brevlådad upptill/nedtill (vanligast på telefon)
+          contentW = rect.width;
+          contentH = contentW / gameAspect;
+          offsetX = 0;
+          offsetY = (rect.height - contentH) / 2;
+        }
         return {
-          x: (clientX - rect.left) * (W/rect.width),
-          y: (clientY - rect.top) * (H/rect.height)
+          x: ((clientX - rect.left - offsetX) / contentW) * W,
+          y: ((clientY - rect.top - offsetY) / contentH) * H
         };
       }
 
@@ -2971,9 +3032,8 @@
         if(!document.body.classList.contains('fullscreen-mode')) return;
         if(window.__wiiKubbHelpOpen) return;
         if(kubbGame.state === 'confirmQuit'){
-          const rect = canvas.getBoundingClientRect();
-          const relX = rect.width > 0 ? (e.clientX - rect.left) / rect.width : 0.5;
-          kubbGame.confirmIndex = relX < 0.5 ? 0 : 1;
+          const g = clientToGameCoords(e.clientX, e.clientY);
+          kubbGame.confirmIndex = g.x < W/2 ? 0 : 1;
           kubbGame.resolveConfirm();
           return;
         }
@@ -3037,9 +3097,8 @@
         const dist = Math.max(adx, ady);
 
         if(kubbGame.state === 'confirmQuit'){
-          const rect = canvas.getBoundingClientRect();
-          const relX = rect.width > 0 ? (t.clientX - rect.left) / rect.width : 0.5;
-          kubbGame.confirmIndex = relX < 0.5 ? 0 : 1;
+          const g = clientToGameCoords(t.clientX, t.clientY);
+          kubbGame.confirmIndex = g.x < W/2 ? 0 : 1;
           kubbGame.resolveConfirm();
           return;
         }
@@ -3097,6 +3156,89 @@
       if(window.__wiiKubbHelpOpen) return;
       kubbGame.requestQuitConfirm();
     });
+  })();
+
+  // ---- textfält med riktigt tangentbord för namn/rumskod ----
+  // Ett alternativ till att bläddra fram bokstav för bokstav med
+  // A/piltangenter - särskilt på telefon är det mycket smidigare att bara
+  // skriva. Fältet visas/döljs automatiskt beroende på spelets tillstånd
+  // (pollat, eftersom tillståndsbyten sker på många olika ställen i koden
+  // utan något gemensamt "händelse"-system att haka i), och hålls synkad
+  // åt BÅDA hållen med den befintliga bokstavs-bläddrings-UI:n på själva
+  // skärmen - man kan alltså blanda och ge sig, byta mellan att skriva och
+  // att bläddra när som helst.
+  (function(){
+    const overlay = document.getElementById('textEntryOverlay');
+    const input = document.getElementById('textEntryInput');
+    const doneBtn = document.getElementById('textEntryDone');
+    if(!overlay || !input || !doneBtn) return;
+
+    let mode = null; // 'name' | 'room' | null
+
+    function submitCurrent(){
+      if(mode === 'name') kubbGame.submitName();
+      else if(mode === 'room') kubbGame.joinOnlineRoom();
+    }
+
+    function syncFromGameState(){
+      if(kubbGame.state === 'nameentry'){
+        if(mode !== 'name'){
+          mode = 'name';
+          input.maxLength = NAME_LEN;
+          input.placeholder = 'SKRIV NAMN';
+          doneBtn.textContent = 'KLAR';
+        }
+        overlay.hidden = false;
+        if(document.activeElement !== input){
+          input.value = kubbGame.nameChars.join('').replace(/ +$/,'');
+        }
+      } else if(kubbGame.state === 'roomCodeEntry'){
+        if(mode !== 'room'){
+          mode = 'room';
+          input.maxLength = ROOM_CODE_LEN;
+          input.placeholder = 'RUMSKOD';
+          doneBtn.textContent = 'ANSLUT';
+        }
+        overlay.hidden = false;
+        if(document.activeElement !== input){
+          input.value = kubbGame.roomChars.join('');
+        }
+      } else if(mode){
+        mode = null;
+        overlay.hidden = true;
+        input.blur();
+        input.value = '';
+      }
+    }
+    setInterval(syncFromGameState, 150);
+
+    // Skriver man i fältet speglas det direkt tillbaka till samma
+    // this.nameChars/this.roomChars som bokstavs-boxarna på skärmen läser
+    // ur, så de uppdateras live i takt med att man skriver.
+    input.addEventListener('input', ()=>{
+      if(mode === 'name'){
+        const v = input.value.toUpperCase().replace(/[^A-Z0-9 ]/g,'').slice(0, NAME_LEN);
+        if(v !== input.value) input.value = v;
+        const chars = v.padEnd(NAME_LEN, ' ').split('');
+        kubbGame.nameChars = chars;
+        kubbGame.nameCursor = Math.min(v.length, NAME_LEN-1);
+      } else if(mode === 'room'){
+        const v = input.value.toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0, ROOM_CODE_LEN);
+        if(v !== input.value) input.value = v;
+        const chars = v.padEnd(ROOM_CODE_LEN, 'A').split('');
+        kubbGame.roomChars = chars;
+        kubbGame.roomCursor = Math.min(v.length, ROOM_CODE_LEN-1);
+      }
+    });
+    input.addEventListener('keydown', (e)=>{
+      if(e.key === 'Enter'){ e.preventDefault(); submitCurrent(); }
+      e.stopPropagation(); // spelets egna tangentbordsgenvägar ska inte trigga medan man skriver
+    });
+    // Markera allt när fältet får fokus, så första knapptryckningen
+    // skriver över standardvärdet ("AAAAAA"/"AAAA") istället för att man
+    // måste radera det för hand först.
+    input.addEventListener('focus', ()=> input.select());
+    doneBtn.addEventListener('click', submitCurrent);
   })();
 })();
 </script>
