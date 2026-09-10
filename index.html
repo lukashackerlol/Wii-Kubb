@@ -208,6 +208,10 @@
     max-width:100vw; max-height:100vh;
     object-fit:contain;
     border-radius:0;
+    /* Startvärde innan första frame hunnit ritas - JS sätter sedan om denna
+       varje frame till PAL.lightest, så letterbox-fälten (kanterna som blir
+       över p.g.a. skärmens bildförhållande) alltid matchar spelets aktuella
+       LCD-bakgrund, t.ex. blåtonat på natten från runda 6. */
     background:#9bbc0f;
   }
 </style>
@@ -703,6 +707,11 @@
     incrementSeagullTotalHits(){
       this.totalSeagullHits++;
       try{ localStorage.setItem(SEAGULL_TOTAL_HITS_KEY, String(this.totalSeagullHits)); }catch(e){}
+    }
+    // Har spelaren träffat tillräckligt många fiskmåsar totalt i jaktläget
+    // för att Kungen ska få ett litet glatt ansikte i de vanliga spellägena?
+    kingIsHappy(){
+      return this.totalSeagullHits >= HAPPY_KING_HITS;
     }
     // ---- global highscore-lista via Firestore (se WiiKubbCloud-modulen) ----
     cloudReady(){
@@ -1918,6 +1927,14 @@
         this.rect(x-1, y-19, 2, 5, PAL.darkest);
         this.rect(x+4, y-18, 2, 4, PAL.darkest);
         this.rect(x-4, y-3, 8, 1, PAL.darkest);
+        // Litet glatt ansikte när spelaren träffat tillräckligt många
+        // fiskmåsar totalt i jaktläget (se HAPPY_KING_HITS) - bara på
+        // Kungen i vanligt stående läge, inte medan han faller/ligger ner.
+        if(this.kingIsHappy()){
+          this.rect(x-3, y-8, 1, 1, PAL.lightest);
+          this.rect(x+2, y-8, 1, 1, PAL.lightest);
+          this.rect(x-2, y-5, 4, 1, PAL.lightest);
+        }
       } else {
         this.rect(x-11, y+3, 22, 7, PAL.darkest);
         this.rect(x-10, y+4, 20, 5, PAL.dark);
@@ -2248,6 +2265,11 @@
       this.rect(x-9, y-40, 3, 5, PAL.darkest);
       this.rect(x-2, y-42, 4, 7, PAL.darkest);
       this.rect(x+6, y-40, 3, 5, PAL.darkest);
+      if(this.kingIsHappy()){
+        this.rect(x-5, y-23, 2, 2, PAL.lightest);
+        this.rect(x+3, y-23, 2, 2, PAL.lightest);
+        this.rect(x-3, y-17, 6, 2, PAL.lightest);
+      }
     }
     drawAim(){
       this.drawScene();
@@ -3098,6 +3120,13 @@
       this.currentStage = this.getVisualStage();
       this.applyStagePalette(this.currentStage, this.msgClock);
       if(this.currentStage === 'hell') this.updateHellParticles(dt);
+      // Letterbox-fälten i helskärmsläge (canvasens CSS-bakgrund, utanför
+      // själva 160x144-ritytan) ska matcha spelets aktuella LCD-bakgrund
+      // istället för en fast färg - annars syns en fast grön/svart kant
+      // som inte hänger med natt-/berusad-/psykedeliskt-/helvete-läget.
+      if(this.canvas.style.backgroundColor !== PAL.lightest){
+        this.canvas.style.backgroundColor = PAL.lightest;
+      }
 
       ctx.save();
       if(this.shake>0) ctx.translate((Math.random()-0.5)*this.shake, (Math.random()-0.5)*this.shake);
