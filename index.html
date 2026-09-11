@@ -162,6 +162,14 @@
     box-shadow:0 3px 0 #1a3a1a;
   }
   .text-entry-done:active{ transform:translateY(2px); box-shadow:0 1px 0 #1a3a1a; }
+  .text-entry-cancel{
+    font-family:'Courier New', monospace; font-weight:bold;
+    background:#7a2f61; color:#f3d6e6;
+    border:none; border-radius:6px; padding:10px 14px; font-size:13px; letter-spacing:1px;
+    cursor:pointer;
+    box-shadow:0 3px 0 #4c1c3d;
+  }
+  .text-entry-cancel:active{ transform:translateY(2px); box-shadow:0 1px 0 #4c1c3d; }
 
   /* ---- kontrollguide (overlay-panel) ---- */
   .help-overlay{
@@ -290,6 +298,7 @@
 <div id="textEntryOverlay" class="text-entry-overlay" hidden>
   <input id="textEntryInput" class="text-entry-input" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false">
   <button id="textEntryDone" class="text-entry-done">KLAR</button>
+  <button id="textEntryCancel" class="text-entry-cancel" title="Avbryt (Esc)" aria-label="Avbryt">AVBRYT</button>
 </div>
 
 <div id="helpOverlay" class="help-overlay" hidden>
@@ -396,6 +405,18 @@
         {id:'join',   label:'GÅ MED I RUM', desc:'ANGE EN RUMSKOD'},
         {id:'back',   label:'TILLBAKA',     desc:'TILL HUVUDMENYN'}
       ]
+    },
+    // Dyker upp istället för att hoppa rakt in i jaktläget när man klickar på
+    // den gömda fiskmåsen på highscore-fliken, EFTER att man passerat
+    // SEAGULL_MENU_UNLOCK_HITS träffade fiskmåsar totalt (se totalSeagullHits).
+    // Innan dess fungerar klicket som förut: rakt in i jaktläget.
+    seagull: {
+      title: 'BONUSSPEL',
+      options: [
+        {id:'seagullhunt', label:'FISKMÅSJAKT', desc:'SPELA JAKTLÄGET'},
+        {id:'seagull',     label:'FISKMÅS',     desc:'?'},
+        {id:'back',        label:'TILLBAKA',    desc:'TILL HIGHSCORE'}
+      ]
     }
   };
   const TIME_ATTACK_START = 60;      // sekunder vid start
@@ -406,18 +427,65 @@
   const TIPSY_FROM_ROUND = 11;        // efter runda 10
   const PSYCHEDELIC_FROM_ROUND = 16;  // efter runda 15
   const HELL_FROM_ROUND = 20;         // från och med runda 20
-  const ACTIVE_STATES = new Set(['aim','power','throw','overpower']); // tillstånd där tid-utmaningens klocka ska ticka (bara lokalt läge)
+  const ACTIVE_STATES = new Set(['aim','power','throw']); // tillstånd där tid-utmaningens klocka ska ticka (bara lokalt läge)
+  // OBS: 'overpower' (specialsekvensen som spelas upp när man kastar för
+  // hårt/långt - ben/fiskmås/jorden-runt) ingår MEDVETET inte här. Klockan
+  // ska stanna helt under den animationen och först ticka igen när nästa
+  // riktiga kast/runda börjar.
   const NAME_CHARSET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ';
   const NAME_LEN = 6;          // antal tecken i namnet på highscore-listan
   const HIGHSCORE_KEY = 'wiiKubbHighscores';
   const MAX_HIGHSCORES = 10;   // topp-10, både lokalt (offline-cache) och i det globala molnet
   const SEAGULL_HIT_KEY = 'wiiKubbSeagullHit'; // sparar om spelaren någonsin träffat en fiskmås (låser upp jaktläges-genvägen)
   const SEAGULL_TOTAL_HITS_KEY = 'wiiKubbSeagullTotalHits'; // livstids-räknare över antal träffade fiskmåsar i jaktläget - återställs ALDRIG (varken mellan rundor eller nya spelomgångar)
+  const HUNT_BEST_KEY = 'wiiKubbSeagullHuntBest'; // rekordmätare: högsta poäng (this.round) någonsin nådd i EN ENDA jaktomgång - till skillnad från SEAGULL_TOTAL_HITS_KEY ovan, som räknar ihop alla omgångar
   const HAPPY_KING_HITS = 20; // när totalSeagullHits når denna gräns får Kungen ett litet glatt ansikte i de vanliga spellägena
+  const SEAGULL_MENU_UNLOCK_HITS = 100; // när totalSeagullHits når denna gräns visas en liten meny (FISKMÅSJAKT/FISKMÅS) istället för att klick på fiskmås-ikonen hoppar rakt in i jaktläget
   // ---- livstidsstatistik som visas på achievements-fliken (se drawAchievements()) ----
   const ROUNDS_CLEARED_KEY = 'wiiKubbRoundsClearedTotal'; // antal rundor (kungen fälld) klarade totalt i lokalt klassiskt/tid-utmaningsläge
   const ONLINE_WINS_KEY = 'wiiKubbOnlineWins';     // antal online-matcher (bäst av 3) vunna totalt
   const ONLINE_LOSSES_KEY = 'wiiKubbOnlineLosses'; // antal online-matcher (bäst av 3) förlorade totalt
+
+  // ---- fiskmås-DUCKNINGSLÄGET (rollerna ombytta - dolt bonusläge nummer
+  // två, låses upp via FISKMÅS-alternativet i den lilla menyn som dyker upp
+  // på fiskmåsikonen efter SEAGULL_MENU_UNLOCK_HITS träffar, se openSeagullMenu()).
+  // Man SPELAR fiskmåsen och ska väja undan pinnar som kastas mot en, istället
+  // för att kasta pinnar själv. Fem "körfält" i sidled (samma idé som det
+  // vanliga sikte-läget, fast nu är det motståndarens sikte, inte ens eget).
+  const DODGE_LANES = 5;
+  const DODGE_LANE_X = [24, 52, 80, 108, 136]; // de fem körfältens x-positioner
+  const DODGE_PLAYER_Y = KUBB_Y;   // måsen flyger på samma höjd som kubbarna normalt står
+  const DODGE_SPAWN_START = 1.5;   // sekunder mellan kast i början
+  const DODGE_SPAWN_MIN = 0.55;    // snabbaste kadensen, oavsett hur bra man blir
+  const DODGE_RISE_START = 1.05;   // hur lång tid ett kast tar från marken upp till mås-höjd i början (=reaktionsfönstret)
+  const DODGE_RISE_MIN = 0.5;      // kortaste reaktionsfönstret
+  const DODGE_RAMP_PER_DODGE = 0.045;      // hur mycket kadensen krymper per lyckad undvikning - litet och kontinuerligt, så det aldrig känns som ett märkbart hopp, bara en osynligt krypande åtstramning
+  const DODGE_RISE_RAMP_PER_DODGE = 0.036; // motsvarande krympning av reaktionsfönstret per lyckad undvikning
+  const DODGE_SECOND_THROWER_AT = 30; // vid denna poäng dyker en till kastare upp och kastar SAMTIDIGT som den första - betydligt svårare, se registerDodgeSuccess()/updateSeagullDodge()
+  const DODGE_THROWER2_X = 24;        // den andra kastarens x-position, tydligt förskjuten från den första (KING_X, mitten) så de två inflygande kasten går att skilja åt
+  const DODGE_HITREACT_DUR = 0.9;  // hur länge yrvaken-reaktionen visas innan game over-skärmen
+  const DODGE_BEST_KEY = 'wiiKubbSeagullDodgeBest'; // livstids-rekord (flest undvikna kast i en följd), sparas lokalt precis som övriga livstidsräknare
+
+  // ---- fiskmås-DUCKNINGSLÄGETS pommes-rusning (funkar som en boss: var
+  // DODGE_POMMES_AT:e lyckade undvikning, se BOSS_TRIGGER_HITS i jaktläget
+  // för samma "var N:e"-mönster) - man får en chans att dyka ner och stjäla
+  // människans tappade pommes innan hon märker det. Siktet pendlar likadant
+  // som i det vanliga sikta/kasta-flödet (this.aimX/aimT), bara snabbare
+  // och över en kortare bana - man trycker A när siktet svischar över
+  // pommesen för att dyka, se startPommesHeist()/updatePommesHeist()/
+  // attemptPommesDive(). ----
+  const DODGE_POMMES_AT = 20;       // 20, 40, 60, ... - se registerDodgeSuccess()
+  const POMMES_HITS_NEEDED = 5;     // så många dyk måste träffa...
+  const POMMES_TIME_LIMIT = 30;     // ...inom denna tid (sekunder), annars märker hon fågeln och rusningen är förbi
+  const POMMES_OFFSET_X = 16;       // hur långt till höger om kastaren (KING_X) pommesen ligger på marken
+  const POMMES_HOVER_Y = 70;        // höjden måsen kretsar på medan siktet pendlar, innan hon dyker
+  const POMMES_HIT_TOL = 7;         // hur nära pommesen (i x-led) siktet måste vara när man dyker för att det ska räknas som träff
+  const POMMES_AIM_RANGE = 22;      // hur långt siktet pendlar ut åt vardera hållet från pommesen
+  const POMMES_AIM_SPEED = 3.4;     // pendlingshastighet - snabbare än vanliga sikta/kasta-lägets aimSpeed, kortare tidsfönster per dyk
+  const POMMES_DIVE_DUR = 0.35;     // hur länge själva dykrörelsen (ner mot marken och tillbaka) tar - siktet fryser under tiden, se updatePommesHeist()
+  const POMMES_INTRO_DUR = 1;       // kort "POMMESRUSNING!"-banderoll innan klockan börjar rinna
+  const POMMES_RESULT_DUR = 1.8;    // hur länge lyckad-/misslyckad-skärmen visas innan man återgår till vanlig duckning
+  const POMMES_STOLEN_KEY = 'wiiKubbPommesStolenTotal'; // livstids-räknare över hur många pommesrusningar som lyckats, sparas lokalt precis som DODGE_BEST_KEY ovan
 
   // ---- fiskmås-jaktläget (dolt bonusläge, låses upp via highscore-fliken) ----
   const HUNT_GAP_MIN = 0.3, HUNT_GAP_MAX = 0.9; // paus mellan överflygningar - mycket kortare än i vanliga läget
@@ -611,6 +679,10 @@
       this.lastSeenMessageAt = 0; // undviker att visa samma meddelande om och om igen
       this.hasHitSeagull = this.loadSeagullHitFlag(); // styr om den lilla fiskmåsen visas på highscore-fliken
       this.totalSeagullHits = this.loadSeagullTotalHits(); // livstids-räknare, se SEAGULL_TOTAL_HITS_KEY - laddas en gång och räknas sedan bara uppåt
+      this.huntBest = this.loadHuntBest(); // rekordmätare för jaktläget (högsta poäng i EN omgång), se HUNT_BEST_KEY
+      this.dodgeBest = this.loadDodgeBest(); // livstidsrekord i duckningsläget, se DODGE_BEST_KEY
+      this.pommesStolenTotal = this.loadPommesStolenTotal(); // livstids-räknare över lyckade pommes-rusningar, se POMMES_STOLEN_KEY
+      this.dodge = null; // spelläges-tillståndet för duckningsläget medan this.state === 'seagulldodge', se startSeagullDodge()
       this.totalRoundsCleared = this.loadRoundsClearedTotal(); // livstids-räknare, se ROUNDS_CLEARED_KEY - visas på achievements-fliken
       this.totalOnlineWins = this.loadOnlineWins();     // livstids-räknare, se ONLINE_WINS_KEY
       this.totalOnlineLosses = this.loadOnlineLosses(); // livstids-räknare, se ONLINE_LOSSES_KEY
@@ -618,6 +690,14 @@
       this.hasDefeatedBossEver = this.loadBossDefeatFlag(); // styr om troféansiktet visas på achievements-fliken
       this.hasDefeatedBossKingEver = this.loadBossKingDefeatFlag(); // uppgraderar troféansiktet till den krönta varianten
       this.hasDefeatedBossPhoenixEver = this.loadBossPhoenixDefeatFlag(); // låser upp eld-trofén (se drawAchievements()/drawSeagull())
+      // ---- upplåsningsnotiser (se queueUnlockNotice()/flushPendingUnlockNotices()/
+      // drawUnlockNotice()): upplåsningar som sker MITT UNDER en omgång samlas i
+      // pendingUnlockNotices utan att avbryta spelet, och flyttas först över till
+      // unlockNoticeQueue (varifrån de visas en i taget, kräver ett klick/tryck
+      // vardera för att försvinna) när omgången är slut, se endGame().
+      this.pendingUnlockNotices = [];
+      this.unlockNoticeQueue = [];
+      this.activeUnlockNotice = null;
       // Bekräftelsedialog för MENY-knappen - avbryter/pausar rundan tills man svarar.
       this.previousState = null;
       this.confirmIndex = 0; // 0 = NEJ (fortsätt), 1 = JA (avsluta)
@@ -807,6 +887,18 @@
       if(this.hasHitSeagull) return; // redan upplåst, inget mer att spara
       this.hasHitSeagull = true;
       try{ localStorage.setItem(SEAGULL_HIT_KEY, '1'); }catch(e){}
+      this.queueUnlockNotice({
+        name: 'FISKMÅSJAKT',
+        desc: 'DU TRÄFFADE EN FISKMÅS FÖR FÖRSTA GÅNGEN',
+        draw: (cx,cy)=>{
+          const ctx = this.ctx;
+          ctx.save();
+          ctx.translate(cx, cy);
+          ctx.scale(0.85, 0.85);
+          this.drawSeagull(0, 0, false, -1);
+          ctx.restore();
+        }
+      });
     }
     // ---- livstids-räknare: totalt antal träffade fiskmåsar i jaktläget ----
     // Till skillnad från this.round (poängen i den pågående jaktomgången, som
@@ -822,11 +914,81 @@
     incrementSeagullTotalHits(){
       this.totalSeagullHits++;
       try{ localStorage.setItem(SEAGULL_TOTAL_HITS_KEY, String(this.totalSeagullHits)); }catch(e){}
+      if(this.totalSeagullHits === HAPPY_KING_HITS){
+        this.queueUnlockNotice({
+          name: 'KUNGENS ANSIKTE',
+          desc: 'DU HAR TRÄFFAT '+HAPPY_KING_HITS+' FISKMÅSAR TOTALT',
+          draw: (cx,cy)=>{ this.drawKing(cx, cy+11, false); }
+        });
+      }
+      if(this.totalSeagullHits === SEAGULL_MENU_UNLOCK_HITS){
+        this.queueUnlockNotice({
+          name: 'NYTT SPELLÄGE: FISKMÅS',
+          desc: 'DU HAR JAGAT '+SEAGULL_MENU_UNLOCK_HITS+' FISKMÅSAR TOTALT',
+          draw: (cx,cy)=>{
+            const ctx = this.ctx;
+            ctx.save();
+            ctx.translate(cx, cy);
+            ctx.scale(0.85, 0.85);
+            this.drawSeagull(0, 0, false, -1);
+            ctx.restore();
+          }
+        });
+      }
+    }
+    // ---- rekordmätare: högsta poäng nådd i en enda jaktomgång (se
+    // HUNT_BEST_KEY) - uppdateras och sparas live medan man spelar, så fort
+    // den pågående omgångens poäng (this.round) slår det gamla rekordet. ----
+    loadHuntBest(){
+      try{
+        const n = parseInt(localStorage.getItem(HUNT_BEST_KEY), 10);
+        return Number.isFinite(n) && n > 0 ? n : 0;
+      }catch(e){ return 0; }
+    }
+    saveHuntBest(){
+      try{ localStorage.setItem(HUNT_BEST_KEY, String(this.huntBest)); }catch(e){}
+    }
+    // ---- livstidsrekord: flest undvikna kast i en följd i duckningsläget
+    // (se DODGE_BEST_KEY) - sparas lokalt, precis som totalSeagullHits ovan. ----
+    loadDodgeBest(){
+      try{
+        const n = parseInt(localStorage.getItem(DODGE_BEST_KEY), 10);
+        return Number.isFinite(n) && n > 0 ? n : 0;
+      }catch(e){ return 0; }
+    }
+    saveDodgeBest(){
+      try{ localStorage.setItem(DODGE_BEST_KEY, String(this.dodgeBest)); }catch(e){}
+    }
+    // ---- livstidsräknare: hur många pommes-rusningar (se POMMES_STOLEN_KEY)
+    // som lyckats totalt - samma sparmönster som dodgeBest ovan. ----
+    loadPommesStolenTotal(){
+      try{
+        const n = parseInt(localStorage.getItem(POMMES_STOLEN_KEY), 10);
+        return Number.isFinite(n) && n > 0 ? n : 0;
+      }catch(e){ return 0; }
+    }
+    incrementPommesStolenTotal(){
+      this.pommesStolenTotal++;
+      try{ localStorage.setItem(POMMES_STOLEN_KEY, String(this.pommesStolenTotal)); }catch(e){}
     }
     // Har spelaren träffat tillräckligt många fiskmåsar totalt i jaktläget
     // för att Kungen ska få ett litet glatt ansikte i de vanliga spellägena?
     kingIsHappy(){
       return this.totalSeagullHits >= HAPPY_KING_HITS;
+    }
+    // Har spelaren träffat tillräckligt många fiskmåsar totalt (se
+    // SEAGULL_MENU_UNLOCK_HITS) för att klick på fiskmås-ikonen på
+    // highscore-fliken ska öppna valmenyn (FISKMÅSJAKT/FISKMÅS) istället för
+    // att hoppa rakt in i jaktläget?
+    seagullMenuUnlocked(){
+      return this.totalSeagullHits >= SEAGULL_MENU_UNLOCK_HITS;
+    }
+    // Öppnar valmenyn för den gömda fiskmåsen (se seagullMenuUnlocked()).
+    openSeagullMenu(){
+      this.highscoreFocus = 'seagull';
+      this.state = 'menu';
+      this.menuScreen = 'seagull';
+      this.menuIndex = 0;
     }
     // ---- livstids-räknare: totalt antal klarade rundor (kungen fälld) i
     // lokalt klassiskt/tid-utmaningsläge. Räknas bara uppåt, se
@@ -873,6 +1035,11 @@
       if(this.hasDefeatedBossEver) return; // redan upplåst, inget mer att spara
       this.hasDefeatedBossEver = true;
       try{ localStorage.setItem(BOSS_DEFEAT_KEY, '1'); }catch(e){}
+      this.queueUnlockNotice({
+        name: 'FISKMÅSSKIN: ARG FISKMÅS',
+        desc: 'DU BESEGRADE FISKMÅSBOSSEN',
+        draw: (cx,cy)=>{ const ctx=this.ctx; ctx.save(); ctx.translate(cx,cy); ctx.scale(0.9,0.9); this.drawBossTrophyFace(false); ctx.restore(); }
+      });
     }
     loadBossKingDefeatFlag(){
       try{ return localStorage.getItem(BOSS_KING_DEFEAT_KEY) === '1'; }catch(e){ return false; }
@@ -881,6 +1048,11 @@
       if(this.hasDefeatedBossKingEver) return; // redan upplåst, inget mer att spara
       this.hasDefeatedBossKingEver = true;
       try{ localStorage.setItem(BOSS_KING_DEFEAT_KEY, '1'); }catch(e){}
+      this.queueUnlockNotice({
+        name: 'FISKMÅSSKIN: FISKMÅSKUNGEN',
+        desc: 'DU BESEGRADE FISKMÅSKUNGEN',
+        draw: (cx,cy)=>{ const ctx=this.ctx; ctx.save(); ctx.translate(cx,cy); ctx.scale(0.9,0.9); this.drawBossTrophyFace(true); ctx.restore(); }
+      });
     }
     loadBossPhoenixDefeatFlag(){
       try{ return localStorage.getItem(BOSS_PHOENIX_DEFEAT_KEY) === '1'; }catch(e){ return false; }
@@ -889,6 +1061,38 @@
       if(this.hasDefeatedBossPhoenixEver) return; // redan upplåst, inget mer att spara
       this.hasDefeatedBossPhoenixEver = true;
       try{ localStorage.setItem(BOSS_PHOENIX_DEFEAT_KEY, '1'); }catch(e){}
+      this.queueUnlockNotice({
+        name: 'FISKMÅSSKIN: FENIXEN',
+        desc: 'DU BESEGRADE FENIXFÅGELN',
+        draw: (cx,cy)=>{ const ctx=this.ctx; ctx.save(); ctx.translate(cx,cy); ctx.scale(0.9,0.9); this.drawPhoenixTrophyFace(); ctx.restore(); }
+      });
+    }
+    // ---- upplåsningsnotis-kön: se konstruktorn (pendingUnlockNotices/
+    // unlockNoticeQueue/activeUnlockNotice) och drawUnlockNotice(). ----
+    queueUnlockNotice(notice){
+      this.pendingUnlockNotices.push(notice);
+    }
+    // Flyttar över ihopsamlade upplåsningar till den synliga kön - kallas när
+    // en omgång är slut (se endGame()) så att spelaren aldrig avbryts mitt i
+    // ett kast. Sätter igång visningen av den första notisen om ingen redan visas.
+    flushPendingUnlockNotices(){
+      if(this.pendingUnlockNotices.length){
+        this.unlockNoticeQueue.push(...this.pendingUnlockNotices);
+        this.pendingUnlockNotices = [];
+      }
+      if(!this.activeUnlockNotice && this.unlockNoticeQueue.length){
+        this.activeUnlockNotice = this.unlockNoticeQueue.shift();
+        this.audio.sfxWin();
+      }
+    }
+    // Kallas av alla in-knappar (A/START/klick/tryck) när en notis visas.
+    // Returnerar true om en notis fanns och konsumerade trycket (så resten
+    // av knapp-logiken kan avbrytas av anroparen).
+    dismissActiveUnlockNotice(){
+      if(!this.activeUnlockNotice) return false;
+      this.audio.sfxLock();
+      this.activeUnlockNotice = this.unlockNoticeQueue.length ? this.unlockNoticeQueue.shift() : null;
+      return true;
     }
     // ---- global highscore-lista via Firestore (se WiiKubbCloud-modulen) ----
     cloudReady(){
@@ -917,6 +1121,10 @@
     endGame(){
       this.throwAnim = null;
       this.overAnim = null;
+      // Eventuella upplåsningar som samlats på hög under omgången (se
+      // queueUnlockNotice()) visas nu, efter att omgången är slut - aldrig
+      // mitt i ett kast.
+      this.flushPendingUnlockNotices();
       if(this.qualifiesForHighscore(this.round, this.gameMode)){
         this.pendingHighscoreRound = this.round;
         this.nameChars = new Array(NAME_LEN).fill('A');
@@ -1393,7 +1601,7 @@
     requestQuitConfirm(){
       if(this.state === 'confirmQuit') return; // redan öppen
 
-      const quittableStates = ['aim','power','throw','overpower','roundclear','onlineWait','onlineLobby'];
+      const quittableStates = ['aim','power','throw','overpower','roundclear','onlineWait','onlineLobby','seagulldodge'];
       if(quittableStates.includes(this.state)){
         this.previousState = this.state;
         this.confirmIndex = 0; // förvalt NEJ - man ska aktivt behöva välja JA
@@ -1444,6 +1652,10 @@
     // ---- input ----
     actionPress(){
       this.audio.ensure();
+      // En upplåsningsnotis visas ovanpå allt annat - första trycket ska bara
+      // kvittera BORT den (se dismissActiveUnlockNotice()), aldrig sippra
+      // igenom till menyn/kastet som råkar ligga under.
+      if(this.dismissActiveUnlockNotice()) return;
       // Fiskmåsen i online-duellen kan fångas av VEM SOM HELST, oavsett
       // vems tur det är - kolla det här, före allt annat, så det aldrig
       // stör den vanliga sikta/kraft/kasta-sekvensen den kanske också råkar
@@ -1454,10 +1666,24 @@
       }
       if(this.state === 'confirmQuit'){ this.resolveConfirm(); return; }
       if(this.state === 'overpower'){ this.attemptEarthCatch(); return; }
+      if(this.state === 'seagulldodge'){
+        if(this.dodge && this.dodge.phase === 'gameover'){ this.startSeagullDodge(); return; }
+        if(this.dodge && this.dodge.phase === 'pommes'){ this.attemptPommesDive(); return; }
+        return;
+      }
       if(this.state === 'menu'){
         const chosen = this.getMenuOptions()[this.menuIndex];
         this.audio.sfxLock();
         if(chosen.id === 'back'){
+          if(this.menuScreen === 'seagull'){
+            // Den gömda fiskmås-menyn nås från highscore-fliken, inte från
+            // huvudmenyn - TILLBAKA ska därför gå dit man kom ifrån, inte
+            // till huvudmenyn som annars är standard för TILLBAKA.
+            this.highscoreFocus = 'seagull';
+            this.requestOnlineHighscores(this.highscoreViewMode);
+            this.state = 'highscoreList';
+            return;
+          }
           this.menuScreen = 'main'; this.menuIndex = 0;
           return;
         }
@@ -1494,11 +1720,17 @@
           this.state = 'roomCodeEntry';
           return;
         }
+        if(chosen.id === 'seagullhunt'){ this.enterSeagullHunt(); return; }
+        if(chosen.id === 'seagull' && this.menuScreen === 'seagull'){
+          this.startSeagullDodge();
+          return;
+        }
         return;
       }
       if(this.state === 'highscoreList'){
         if(this.highscoreFocus === 'seagull' && this.hasHitSeagull){
-          this.enterSeagullHunt();
+          if(this.seagullMenuUnlocked()) this.openSeagullMenu();
+          else this.enterSeagullHunt();
         } else {
           this.state = 'menu';
         }
@@ -1778,8 +2010,367 @@
       this.aimT = Math.random()*10;
     }
 
-    // ---- fiskmås-jaktläget: dolt bonusläge, låses upp via ikonen på
-    // highscore-fliken när man träffat en fiskmås minst en gång ----
+    // ---- fiskmås-DUCKNINGSLÄGET: rollerna ombytta - man SPELAR fiskmåsen
+    // och ska väja undan pinnar som kastas mot en. Dolt bonusläge nummer
+    // två, låses upp via FISKMÅS-alternativet i openSeagullMenu(). ----
+    startSeagullDodge(){
+      this.audio.ensure();
+      this.gameMode = 'seagulldodge';
+      this.round = 0; // driver stämningsläget (se getVisualStage()) precis som i jaktläget - stiger med d.score i updateSeagullDodge() så dygnscykeln (natt/berusad/psykedeliskt/helvete) rullar på här också
+      this.state = 'seagulldodge';
+      this.dodge = {
+        phase: 'playing',      // 'playing' | 'hitreact' | 'gameover'
+        lane: 2,                // 0-4, index i DODGE_LANE_X - börjar i mitten
+        displayX: DODGE_LANE_X[2], // mjukt interpolerad ritposition, se updateSeagullDodge()
+        score: 0,
+        spawnInterval: DODGE_SPAWN_START,
+        riseTime: DODGE_RISE_START,
+        waitT: DODGE_SPAWN_START * 0.6, // kort paus innan det första kastet, så man hinner orientera sig
+        throw: null,             // {lane, t, dur} - kastare 1:s (mitten) inflygande kast
+        facing: 1,               // 1 = åt höger (standard, se drawSeagull()), -1 = åt vänster - byts i dpadPress() när man styr
+        secondThrowerActive: false, // sant efter DODGE_SECOND_THROWER_AT lyckade undvikningar, se registerDodgeSuccess()
+        throw2: null,             // kastare 2:s (se DODGE_THROWER2_X) inflygande kast, samma form som throw - helt oberoende timing
+        waitT2: 0,
+        hitT: 0,
+        wingT: 0,
+        isNewBest: false,
+        nextPommesAt: DODGE_POMMES_AT, // poängen då nästa pommes-rusning triggas, se registerDodgeSuccess()/startPommesHeist()
+        pommes: null                   // {hits,timeLeft,aimT,aimX,diveT,diveHit,introT,result,resultT} medan phase==='pommes', se startPommesHeist()
+      };
+    }
+    // Räknas för VARJE lyckad undvikning, oavsett vilken av de (upp till) två
+    // kastarna kastet kom från - se updateSeagullDodge().
+    registerDodgeSuccess(){
+      const d = this.dodge;
+      d.score++;
+      this.audio.sfxLock();
+      // Stämningsläget (se getVisualStage()) läser this.round precis som i
+      // jaktläget. Här delas poängen på två, så att varje FAS i dygnscykeln
+      // (natt/berusad/psykedeliskt/helvete) blir DUBBELT så lång här som i
+      // de andra lägena - annars hinner man knappt se dem innan allt redan
+      // är helvete.
+      this.round = d.score / 2;
+      // Svårighetsgraden krymper kontinuerligt och osynligt för varje enskild
+      // lyckad undvikning (inga märkbara hopp) - man ska känna att det blir
+      // svårare utan att kunna sätta fingret på exakt när det hände.
+      d.spawnInterval = Math.max(DODGE_SPAWN_MIN, d.spawnInterval - DODGE_RAMP_PER_DODGE);
+      d.riseTime = Math.max(DODGE_RISE_MIN, d.riseTime - DODGE_RISE_RAMP_PER_DODGE);
+      // Vid DODGE_SECOND_THROWER_AT dyker en till kastare upp (se
+      // DODGE_THROWER2_X) och börjar kasta SAMTIDIGT som den första, helt
+      // oberoende av hennes timing - betydligt svårare, se
+      // updateSeagullDodge().
+      if(!d.secondThrowerActive && d.score >= DODGE_SECOND_THROWER_AT){
+        d.secondThrowerActive = true;
+        d.waitT2 = d.spawnInterval * 0.5; // kort fördröjning innan hon kastar första gången, så det inte känns som ett omedelbart dubbelkast
+      }
+      // Var DODGE_POMMES_AT:e lyckade undvikning: en chans att stjäla
+      // pommesen innan spelet fortsätter som vanligt - se startPommesHeist().
+      if(d.score >= d.nextPommesAt){
+        d.nextPommesAt += DODGE_POMMES_AT;
+        this.startPommesHeist();
+      }
+    }
+    // ---- pommes-rusningen: byter tillfälligt ut körfälts-duckningen mot
+    // samma sorts pendlande sikte som i vanliga kast/jaktläget (this.aimX/
+    // aimT) - man trycker A när siktet svischar över pommesen för att dyka.
+    // POMMES_HITS_NEEDED träffar inom POMMES_TIME_LIMIT sekunder = lyckad
+    // rusning, se resolvePommesHeist(). Alla inflygande kast rensas bort
+    // (d.throw/d.throw2) så man inte kan bli träffad medan man siktar. ----
+    startPommesHeist(){
+      const d = this.dodge;
+      d.throw = null; d.throw2 = null;
+      d.pommes = {
+        hits: 0,
+        timeLeft: POMMES_TIME_LIMIT,
+        aimT: 0,
+        aimX: KING_X + POMMES_OFFSET_X,
+        diveT: 0,        // >0 medan dyk-animationen spelas - siktet fryst under tiden
+        diveHit: false,  // om det pågående/senaste dyket träffade - styr träff/miss-visualen
+        introT: POMMES_INTRO_DUR,
+        result: null,    // null medan rusningen pågår, sedan 'success' | 'fail'
+        resultT: 0
+      };
+      d.phase = 'pommes';
+      this.audio.sfxLock();
+    }
+    // Anropas (via actionPress) varje gång A trycks medan this.dodge.phase
+    // === 'pommes' - avfyrar ett dyk mot pommesens position om siktet just
+    // då ligger inom POMMES_HIT_TOL, annars blir det en miss. Ett dyk i
+    // taget: nya tryck ignoreras tills dykanimationen (diveT) spelat klart.
+    attemptPommesDive(){
+      const d = this.dodge;
+      const p = d && d.pommes;
+      if(!p || p.result || p.introT > 0 || p.diveT > 0) return;
+      const px = KING_X + POMMES_OFFSET_X;
+      const hit = Math.abs(p.aimX - px) <= POMMES_HIT_TOL;
+      p.diveHit = hit;
+      p.diveT = POMMES_DIVE_DUR;
+      this.audio[hit ? 'sfxHit' : 'sfxMiss']();
+      if(hit){
+        p.hits++;
+        this.shake = Math.max(this.shake, 3);
+      }
+    }
+    // Avgör rusningen - success (POMMES_HITS_NEEDED träffar hunna i tid)
+    // eller fail (klockan rann ut först). Resultatskärmen visas i
+    // POMMES_RESULT_DUR sekunder (se updatePommesHeist()) innan
+    // duckningsläget återupptas som vanligt.
+    resolvePommesHeist(success){
+      const d = this.dodge;
+      const p = d && d.pommes;
+      if(!p || p.result) return;
+      p.result = success ? 'success' : 'fail';
+      p.resultT = 0;
+      if(success){
+        this.incrementPommesStolenTotal();
+        this.audio.sfxWin();
+        this.flash = 0.4;
+        this.shake = Math.max(this.shake, 6);
+      } else {
+        this.audio.sfxOver();
+      }
+    }
+    updatePommesHeist(dt){
+      const d = this.dodge;
+      const p = d && d.pommes;
+      if(!p) return;
+      if(p.result){
+        p.resultT += dt;
+        if(p.resultT >= POMMES_RESULT_DUR){
+          // Rusningen är avklarad - tillbaka till vanlig duckning med en
+          // färsk kastartimer så det inte kommer ett kast direkt.
+          d.phase = 'playing';
+          d.pommes = null;
+          d.waitT = d.spawnInterval;
+          if(d.secondThrowerActive) d.waitT2 = d.spawnInterval;
+        }
+        return;
+      }
+      if(p.introT > 0){
+        p.introT = Math.max(0, p.introT - dt);
+        return;
+      }
+      if(p.diveT > 0){
+        p.diveT = Math.max(0, p.diveT - dt);
+        if(p.diveT === 0 && p.hits >= POMMES_HITS_NEEDED) this.resolvePommesHeist(true);
+        return; // siktet fryst medan dyket spelar upp
+      }
+      p.timeLeft -= dt;
+      if(p.timeLeft <= 0){ this.resolvePommesHeist(false); return; }
+      p.aimT += dt*POMMES_AIM_SPEED;
+      p.aimX = KING_X + POMMES_OFFSET_X + Math.sin(p.aimT)*POMMES_AIM_RANGE;
+    }
+    // Träffad av valfritt kast (kastare 1 ELLER 2) - rundan är slut.
+    triggerDodgeHit(){
+      const d = this.dodge;
+      if(!d || d.phase !== 'playing') return;
+      d.phase = 'hitreact';
+      d.hitT = 0;
+      this.audio.sfxHit();
+      this.shake = 7;
+    }
+    updateSeagullDodge(dt){
+      const d = this.dodge;
+      if(!d) return;
+      d.wingT += dt;
+      // Mjuk glidning mot valt körfält istället för att hoppa direkt dit -
+      // ren visuell polish, styr inte själva träffkollisionen (den bryr sig
+      // bara om d.lane, se nedan).
+      const targetX = DODGE_LANE_X[d.lane];
+      d.displayX += (targetX - d.displayX) * Math.min(1, dt*12);
+
+      if(d.phase === 'playing'){
+        // Kastare 1 (mitten, KING_X) - alltid aktiv från start.
+        if(d.throw){
+          d.throw.t += dt;
+          if(d.throw.t >= d.throw.dur){
+            if(d.throw.lane === d.lane){
+              this.triggerDodgeHit();
+            } else {
+              d.throw = null;
+              this.registerDodgeSuccess();
+              d.waitT = d.spawnInterval;
+            }
+          }
+        } else {
+          d.waitT -= dt;
+          if(d.waitT <= 0){
+            d.throw = {lane: Math.floor(Math.random()*DODGE_LANES), t:0, dur:d.riseTime};
+            this.audio.sfxThrow();
+          }
+        }
+
+        // Kastare 2 (DODGE_THROWER2_X) - dyker upp efter DODGE_SECOND_THROWER_AT
+        // lyckade undvikningar och kastar HELT OBEROENDE av kastare 1, på
+        // samma kadens/reaktionsfönster - man måste alltså hålla koll på och
+        // väja för två inflygande kast samtidigt.
+        if(d.phase === 'playing' && d.secondThrowerActive){
+          if(d.throw2){
+            d.throw2.t += dt;
+            if(d.throw2.t >= d.throw2.dur){
+              if(d.throw2.lane === d.lane){
+                this.triggerDodgeHit();
+              } else {
+                d.throw2 = null;
+                this.registerDodgeSuccess();
+                d.waitT2 = d.spawnInterval;
+              }
+            }
+          } else {
+            d.waitT2 -= dt;
+            if(d.waitT2 <= 0){
+              d.throw2 = {lane: Math.floor(Math.random()*DODGE_LANES), t:0, dur:d.riseTime};
+              this.audio.sfxThrow();
+            }
+          }
+        }
+      } else if(d.phase === 'hitreact'){
+        d.hitT += dt;
+        if(d.hitT >= DODGE_HITREACT_DUR){
+          d.phase = 'gameover';
+          d.isNewBest = d.score > this.dodgeBest;
+          if(d.isNewBest){
+            this.dodgeBest = d.score;
+            this.saveDodgeBest();
+          }
+          this.audio.sfxOver();
+        }
+      } else if(d.phase === 'pommes'){
+        this.updatePommesHeist(dt);
+      }
+      // fas 'gameover': inget mer att uppdatera, bara vänta på A/START (se actionPress()/startPress())
+    }
+    drawSeagullDodge(){
+      const d = this.dodge;
+      if(!d) return;
+      this.drawField();
+      this.drawThrower();
+      if(d.secondThrowerActive) this.drawThrower(DODGE_THROWER2_X);
+      const ctx = this.ctx;
+
+      // Pommes-rusningen (se startPommesHeist()) har en helt egen ritrutin -
+      // fältet och kastaren/kastarna ovan är redan ritade, resten (sikte,
+      // pommes, måsens dyk, HUD) hanteras separat och vi hoppar över den
+      // vanliga körfälts-/inflygande-kast-renderingen nedanför.
+      if(d.phase === 'pommes'){ this.drawPommesHeist(); return; }
+
+      // Ritar ett inflygande kast (varningsstjärna + själva pinnen) från en
+      // given kastarposition - återanvänds för både kastare 1 och 2, som
+      // annars är identiska förutom var de startar ifrån.
+      const drawIncomingThrow = (th, originX) => {
+        if(!th || d.phase !== 'playing') return;
+        if(Math.floor(d.wingT*8)%2===0){
+          ctx.fillStyle = PAL.darkest;
+          this.drawStar(DODGE_LANE_X[th.lane], DODGE_PLAYER_Y-16, 4,2,4);
+        }
+        const tt = Math.min(1, th.t / th.dur);
+        const x = originX + (DODGE_LANE_X[th.lane]-originX)*tt;
+        const yLinear = (BASE_Y-16) + (DODGE_PLAYER_Y-(BASE_Y-16))*tt;
+        const arc = Math.sin(Math.PI*tt) * 12;
+        this.drawBaton(x, yLinear-arc, d.wingT*8, 1);
+      };
+      drawIncomingThrow(d.throw, KING_X);
+      if(d.secondThrowerActive) drawIncomingThrow(d.throw2, DODGE_THROWER2_X);
+
+      const dizzy = d.phase !== 'playing';
+      this.drawSeagull(d.displayX, DODGE_PLAYER_Y + Math.sin(d.wingT*6)*2, dizzy, d.facing);
+
+      ctx.textAlign='left';
+      ctx.fillStyle = PAL.darkest;
+      ctx.font = "6px monospace";
+      ctx.fillText("POÄNG "+d.score, 8, 12);
+      ctx.textAlign='right';
+      ctx.fillText("REKORD "+this.dodgeBest, W-8, 12);
+      ctx.textAlign='center';
+
+      if(d.phase === 'gameover'){
+        this.rect(W/2-58, 46, 116, 54, PAL.darkest);
+        this.rect(W/2-56, 48, 112, 50, PAL.lightest);
+        this.centerText("TRÄFFAD!", 62, PAL.darkest, 9);
+        this.centerText(d.isNewBest ? "NYTT REKORD: "+d.score : "UNDVEK "+d.score+" KAST", 76, PAL.darkest, 6);
+        if(Math.floor(this.msgClock*2)%2===0){
+          ctx.fillStyle = PAL.darkest;
+          ctx.font = "7px monospace";
+          ctx.fillText("TRYCK A = SPELA IGEN", W/2, 88);
+        }
+        ctx.fillStyle = PAL.darkest;
+        ctx.font = "6px monospace";
+        ctx.fillText("TRYCK START = MENY", W/2, 98);
+      }
+    }
+
+    // ---- ritar pommes-rusningen (this.dodge.phase === 'pommes') - fältet
+    // och kastaren/kastarna är redan ritade av drawSeagullDodge() innan
+    // detta anropas, se startPommesHeist() för själva spellogiken. ----
+    drawPommesHeist(){
+      const d = this.dodge, p = d.pommes;
+      if(!p) return;
+      const ctx = this.ctx;
+      const px = KING_X + POMMES_OFFSET_X;
+      const groundY = BASE_Y;
+
+      // Pommesen, på marken bredvid kastaren.
+      this.rect(px-4, groundY-8, 8, 8, PAL.dark);
+      this.rect(px-3, groundY-9, 2, 4, PAL.lightest);
+      this.rect(px, groundY-10, 2, 5, PAL.lightest);
+      this.rect(px+2, groundY-8, 2, 3, PAL.lightest);
+
+      const diving = p.diveT > 0;
+      let seagullY;
+      if(diving){
+        const prog = 1 - (p.diveT / POMMES_DIVE_DUR);      // 0 -> 1 under dykets gång
+        const swoop = 1 - Math.abs(prog*2 - 1);             // 0 -> 1 -> 0, toppar vid dykets mittpunkt
+        seagullY = POMMES_HOVER_Y + (groundY-10 - POMMES_HOVER_Y) * swoop;
+      } else {
+        seagullY = POMMES_HOVER_Y + Math.sin(d.wingT*6)*2;
+      }
+
+      // Siktet - pendlar fram och tillbaka över pommesen tills man dyker,
+      // samma idé som det vanliga sikta/kasta-lägets aimX/aimT, bara
+      // snabbare och med kortare bana. Fryst (och gömt) under dyk/resultat.
+      if(!p.result && !diving){
+        ctx.strokeStyle = PAL.darkest;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(p.aimX, groundY-6, 6, 0, Math.PI*2);
+        ctx.moveTo(p.aimX-9, groundY-6); ctx.lineTo(p.aimX-3, groundY-6);
+        ctx.moveTo(p.aimX+3, groundY-6); ctx.lineTo(p.aimX+9, groundY-6);
+        ctx.stroke();
+      }
+
+      this.drawSeagull(p.aimX, seagullY, false, p.aimX >= px ? -1 : 1);
+
+      ctx.textAlign='left';
+      ctx.fillStyle = PAL.darkest;
+      ctx.font = "6px monospace";
+      ctx.fillText("PORTIONER "+p.hits+"/"+POMMES_HITS_NEEDED, 8, 12);
+      ctx.textAlign='right';
+      ctx.fillText(Math.ceil(Math.max(0,p.timeLeft))+"S", W-8, 12);
+      ctx.textAlign='center';
+
+      if(p.introT > 0){
+        this.rect(W/2-62, 50, 124, 34, PAL.darkest);
+        this.rect(W/2-60, 52, 120, 30, PAL.lightest);
+        this.centerText("POMMESRUSNING!", 64, PAL.darkest, 8);
+        this.centerText("TRÄFFA PORTIONEN 5 GÅNGER", 76, PAL.darkest, 6);
+      } else if(p.result){
+        this.rect(W/2-58, 46, 116, 54, PAL.darkest);
+        this.rect(W/2-56, 48, 112, 50, PAL.lightest);
+        if(p.result === 'success'){
+          this.centerText("LYCKAD RUSNING!", 62, PAL.darkest, 9);
+          this.centerText("DU STAL PORTIONEN", 76, PAL.darkest, 6);
+        } else {
+          this.centerText("HON MÄRKTE DIG!", 62, PAL.darkest, 9);
+          this.centerText("PORTIONEN KOM UNDAN", 76, PAL.darkest, 6);
+        }
+      } else if(diving && !p.diveHit){
+        ctx.fillStyle = PAL.darkest;
+        ctx.font = "6px monospace";
+        ctx.fillText("MISS!", W/2, 100);
+      }
+    }
+
+
     enterSeagullHunt(){
       this.audio.ensure();
       this.gameMode = 'seagullhunt';
@@ -2226,6 +2817,10 @@
       }
       if(this.gameMode === 'seagullhunt'){
         this.round++;
+        if(this.round > this.huntBest){
+          this.huntBest = this.round;
+          this.saveHuntBest();
+        }
         if(!this.boss && this.round % BOSS_TRIGGER_HITS === 0){
           this.startSeagullBoss();
           return;
@@ -2249,6 +2844,10 @@
     // tangentbordet och (i helskärmsläget) skärmknapparna, så de två
     // ingångarna aldrig kan hamna i otakt med varandra.
     dpadPress(dir){
+      // Notisen äter alla piltryck tills den kvitterats bort med
+      // A/START/klick (se dismissActiveUnlockNotice()) - annars kunde man
+      // t.ex. byta bokstav i namninmatningen som råkar ligga under den.
+      if(this.activeUnlockNotice) return;
       if(this.state === 'nameentry'){
         if(dir === 'up') this.nameEntryChangeLetter(1);
         else if(dir === 'down') this.nameEntryChangeLetter(-1);
@@ -2279,22 +2878,42 @@
         if(dir === 'left' || dir === 'right') this.moveAchievementFocus(dir === 'right' ? 1 : -1);
         return;
       }
+      if(this.state === 'seagulldodge'){
+        if(!this.dodge || this.dodge.phase !== 'playing') return;
+        // Måsen vänder sig och tittar åt det håll man senast styrde, se
+        // drawSeagullDodge() (dir===-1 flippar sprajten, se drawSeagull()).
+        if(dir === 'left'){ this.dodge.lane = Math.max(0, this.dodge.lane-1); this.dodge.facing = -1; }
+        else if(dir === 'right'){ this.dodge.lane = Math.min(DODGE_LANES-1, this.dodge.lane+1); this.dodge.facing = 1; }
+        return;
+      }
     }
     // Delad logik för "START trycktes" - fysiska START-knappen och (i
     // helskärmsläget) en lång tryckning på skärmen gör samma sak.
     startPress(){
+      if(this.dismissActiveUnlockNotice()) return;
       if(this.state === 'nameentry'){ this.submitName(); return; }
       if(this.state === 'roomCodeEntry'){ this.joinOnlineRoom(); return; }
       if(this.state === 'onlineRoundResult'){ this.exitToMenuFromResult(); return; }
+      if(this.state === 'seagulldodge' && this.dodge && this.dodge.phase === 'gameover'){
+        this.openSeagullMenu();
+        return;
+      }
       this.actionPress();
     }
     bindInput(){
       window.addEventListener('keydown', (e)=>{
         if(window.__wiiKubbHelpOpen) return; // kontrollguiden är öppen - rör inte spelet under tiden
 
+        if(this.activeUnlockNotice){
+          // En upplåsningsnotis visas - bara ENTER/MELLANSLAG kvitterar bort
+          // den (som A/START), alla andra tangenter ignoreras helt så
+          // menyn/kastet under aldrig kan påverkas av misstag.
+          if(e.code === 'Space' || e.code === 'Enter'){ e.preventDefault(); this.dismissActiveUnlockNotice(); }
+          return;
+        }
         const arrowDir = e.code==='ArrowUp' ? 'up' : e.code==='ArrowDown' ? 'down'
           : e.code==='ArrowLeft' ? 'left' : e.code==='ArrowRight' ? 'right' : null;
-        if(arrowDir && ['nameentry','roomCodeEntry','confirmQuit','menu','highscoreList','achievements'].includes(this.state)){
+        if(arrowDir && ['nameentry','roomCodeEntry','confirmQuit','menu','highscoreList','achievements','seagulldodge'].includes(this.state)){
           e.preventDefault();
           this.dpadPress(arrowDir);
           return;
@@ -2302,6 +2921,7 @@
         if(this.state === 'nameentry'){
           if(e.code === 'Enter'){ e.preventDefault(); this.submitName(); return; }
           if(e.code === 'Space'){ e.preventDefault(); this.nameEntryChangeLetter(1); return; }
+          if(e.code === 'Escape'){ e.preventDefault(); this.requestQuitConfirm(); return; }
           return;
         }
         if(this.state === 'roomCodeEntry'){
@@ -2326,9 +2946,16 @@
       });
       document.getElementById('btnA').addEventListener('click', ()=>this.actionPress());
       document.getElementById('btnStart').addEventListener('click', ()=>this.startPress());
-      document.getElementById('btnB').addEventListener('click', ()=>this.audio.toggleSound());
-      document.getElementById('btnMenu').addEventListener('click', ()=>this.requestQuitConfirm());
+      document.getElementById('btnB').addEventListener('click', ()=>{
+        if(this.dismissActiveUnlockNotice()) return;
+        this.audio.toggleSound();
+      });
+      document.getElementById('btnMenu').addEventListener('click', ()=>{
+        if(this.dismissActiveUnlockNotice()) return;
+        this.requestQuitConfirm();
+      });
       document.getElementById('btnSelect').addEventListener('click', ()=>{
+        if(this.dismissActiveUnlockNotice()) return;
         if(this.state === 'gameover'){ this.state = 'menu'; this.menuScreen = 'main'; this.menuIndex = 0; return; }
         this.dpadPress('left');
       });
@@ -2346,6 +2973,7 @@
       // Direkt tryck/klick på den lilla fiskmåsen på highscore-fliken hoppar
       // rakt in i jaktläget, oavsett var fokus råkar stå i flik-navigeringen.
       this.canvas.addEventListener('click', (e)=>{
+        if(this.activeUnlockNotice) return; // låt klicket sippra vidare till den generella klick-lyssnaren, som kvitterar bort notisen
         if(this.state !== 'highscoreList') return;
         const rect = this.canvas.getBoundingClientRect();
         if(rect.width === 0 || rect.height === 0) return;
@@ -2356,13 +2984,15 @@
         if(this.hasHitSeagull && inBox(this._decoSeagullBox)){
           e.stopImmediatePropagation();
           this.highscoreFocus = 'seagull';
-          this.enterSeagullHunt();
+          if(this.seagullMenuUnlocked()) this.openSeagullMenu();
+          else this.enterSeagullHunt();
           return;
         }
       });
       // Direkt tryck/klick på trofé-ikonerna på achievements-fliken togglar
       // dem på/av, oavsett var fokus råkar stå i flik-navigeringen.
       this.canvas.addEventListener('click', (e)=>{
+        if(this.activeUnlockNotice) return; // låt klicket sippra vidare till den generella klick-lyssnaren, som kvitterar bort notisen
         if(this.state !== 'achievements') return;
         const rect = this.canvas.getBoundingClientRect();
         if(rect.width === 0 || rect.height === 0) return;
@@ -2492,11 +3122,15 @@
       this.rect(0,-6,1,12, PAL.dark);
       ctx.restore();
     }
-    drawThrower(){
-      const x=80,y=BASE_Y;
-      this.rect(x-3,y-10,6,10, PAL.darkest);
-      this.rect(x-2,y-9,4,8, PAL.dark);
-      this.rect(x-4,y-16,8,7, PAL.darkest);
+    drawThrower(x){
+      // x är valfri - default är den vanliga kastarpositionen (KING_X) som
+      // alla andra spellägen använder. Fiskmås-duckningsläget återanvänder
+      // samma sprite för en EVENTUELL andra kastare på en annan position
+      // (se DODGE_THROWER2_X/drawSeagullDodge()).
+      const cx = (x===undefined) ? 80 : x, y=BASE_Y;
+      this.rect(cx-3,y-10,6,10, PAL.darkest);
+      this.rect(cx-2,y-9,4,8, PAL.dark);
+      this.rect(cx-4,y-16,8,7, PAL.darkest);
     }
 
     drawMenu(t){
@@ -2535,6 +3169,11 @@
       ctx.font = "6px monospace";
       if(this.matchType === 'online'){
         ctx.fillText('DU: SPELARE '+(this.localRole==='player1'?'1':'2'), 8, 12);
+      } else if(this.gameMode === 'seagulldodge'){
+        // Samma poängvärde som visas under själva spelandet (se
+        // drawSeagullDodge()) - INTE this.round, som här bara är halva
+        // poängen (den styr dygnscykelns takt, se registerDodgeSuccess()).
+        ctx.fillText("POÄNG "+(this.dodge ? this.dodge.score : 0), 8, 12);
       } else if(this.gameMode === 'seagullhunt'){
         ctx.fillText("POÄNG "+this.round, 8, 12);
       } else {
@@ -2543,6 +3182,11 @@
       ctx.textAlign='right';
       if(this.matchType === 'online'){
         ctx.fillText("KAST KVAR "+Math.max(this.batons,0), W-8, 12);
+      } else if(this.gameMode === 'seagulldodge'){
+        // Duckningsläget har inga pinnar att kasta med - visa samma rekord
+        // som redan syns under spelandet istället för ett missvisande
+        // "PINNAR"-antal som hör hemma i de andra lägena.
+        ctx.fillText("REKORD "+this.dodgeBest, W-8, 12);
       } else if(this.gameMode === 'seagullhunt'){
         ctx.fillText("PINNAR ∞", W-8, 12);
       } else {
@@ -2599,6 +3243,12 @@
         ctx.fillStyle = PAL.darkest;
         ctx.font="6px monospace";
         ctx.fillText("FISKMÅS-JAKT", W/2, 12);
+        // Rekordmätaren - högsta poäng någonsin i EN jaktomgång (se
+        // HUNT_BEST_KEY/loadHuntBest()), uppdateras live så fort man slår
+        // det under den pågående omgången (se finishSeagullHit()).
+        ctx.textAlign='left';
+        ctx.font="6px monospace";
+        ctx.fillText("REKORD "+this.huntBest, 8, 32);
         // Livstids-räknaren - skiljer sig från POÄNG ovan genom att den
         // aldrig nollställs, så spelaren ser sitt totala antal träffar
         // genom alla jaktomgångar, inte bara den pågående.
@@ -4016,6 +4666,89 @@
       }
     }
 
+    // Enkel ord-radbrytning för notis-texterna nedan - grådig radbrytning
+    // (greedy word wrap) baserad på ctx.measureText, så namn/beskrivningar
+    // som är för långa för en rad automatiskt delas upp i flera, istället
+    // för att rinna utanför notis-rutan eller kräva hårdkodade radbrytningar
+    // vid varje anropsställe (se queueUnlockNotice()).
+    wrapNoticeText(text, maxWidthPx){
+      const ctx = this.ctx;
+      const words = text.split(' ');
+      const lines = [];
+      let line = '';
+      for(const word of words){
+        const test = line ? line+' '+word : word;
+        if(ctx.measureText(test).width > maxWidthPx && line){
+          lines.push(line);
+          line = word;
+        } else {
+          line = test;
+        }
+      }
+      if(line) lines.push(line);
+      return lines;
+    }
+
+    // ---- upplåsningsnotis: ritas ovanpå ALLT annat (se loop(), sist i
+    // ritpasset) när this.activeUnlockNotice är satt (se queueUnlockNotice()/
+    // flushPendingUnlockNotices() i konstruktorn/endGame()). Fryser inget
+    // själv - spelet bakom står redan stilla eftersom notisen bara visas
+    // mellan rundor, aldrig mitt i ett kast. Kvitteras bort med valfri
+    // knapp/klick/tryck, se dismissActiveUnlockNotice() och alla dess
+    // anropsställen i input-hanteringen.
+    drawUnlockNotice(){
+      const n = this.activeUnlockNotice;
+      if(!n) return;
+      const ctx = this.ctx;
+
+      // Nedtonad skärm bakom rutan, så blicken dras till notisen istället
+      // för den frusna spelscenen/menyn under.
+      ctx.fillStyle = 'rgba(15,56,15,0.55)';
+      ctx.fillRect(0,0,W,H);
+
+      const modalX = 14, modalY = 14, modalW = 132, modalH = 118;
+      this.rect(modalX, modalY, modalW, modalH, PAL.darkest);
+      this.rect(modalX+2, modalY+2, modalW-4, modalH-4, PAL.lightest);
+
+      ctx.textAlign = 'center';
+      ctx.fillStyle = PAL.darkest;
+      ctx.font = "8px monospace";
+      ctx.fillText("NYTT UPPLÅST!", W/2, modalY+13);
+
+      // Ikonruta - notisens egen draw(cx,cy) återanvänder samma
+      // trofé-/kung-/fiskmås-ritkod som spelet redan har (se queueUnlockNotice()),
+      // så ikonen ser identisk ut här som på achievements-fliken/i spelet.
+      const boxW = 38, boxH = 34;
+      const boxX = W/2 - boxW/2, boxY = modalY + 18;
+      this.rect(boxX, boxY, boxW, boxH, PAL.darkest);
+      this.rect(boxX+1, boxY+1, boxW-2, boxH-2, PAL.lightest);
+      n.draw(W/2, boxY+boxH/2);
+
+      let y = boxY + boxH + 13;
+      const textMaxW = modalW - 16;
+
+      ctx.font = "6px monospace";
+      ctx.fillStyle = PAL.darkest;
+      this.wrapNoticeText(n.name, textMaxW).forEach(line=>{
+        ctx.fillText(line, W/2, y);
+        y += 8;
+      });
+
+      y += 2;
+      ctx.font = "5px monospace";
+      ctx.fillStyle = PAL.dark;
+      this.wrapNoticeText(n.desc, textMaxW).forEach(line=>{
+        ctx.fillText(line, W/2, y);
+        y += 7;
+      });
+
+      if(Math.floor(this.msgClock*2)%2===0){
+        ctx.fillStyle = PAL.darkest;
+        ctx.font = "5px monospace";
+        ctx.fillText("TRYCK FÖR ATT FORTSÄTTA", W/2, modalY+modalH-6);
+      }
+    }
+
     // ---- online-duell: skärmar för att skapa/gå med i rum och spela matchen ----
     drawRoomCodeEntry(){
       this.rect(0,0,W,H, PAL.lightest);
@@ -4275,6 +5008,9 @@
       } else if(this.state === 'kingfall'){
         this.updateKingFall(dt);
         if(this.state === 'kingfall') this.drawKingFallScene(); // rita om inte animationen redan avslutats denna frame
+      } else if(this.state === 'seagulldodge'){
+        this.updateSeagullDodge(dt);
+        this.drawSeagullDodge();
       } else if(this.state === 'roundclear'){
         this.drawRoundClear();
       } else if(this.state === 'gameover'){
@@ -4318,6 +5054,11 @@
         this.drawGhostKubbs(this.msgClock);
         this.drawHellParticles();
       }
+
+      // Upplåsningsnotis (se drawUnlockNotice()) ritas allra sist, ovanpå
+      // stämningsläges-overlayen ovan - den ska aldrig kunna hamna bakom
+      // natt-stjärnor/spökkubbar/helvetes-partiklar.
+      if(this.activeUnlockNotice) this.drawUnlockNotice();
 
       if(this.flash>0){
         ctx.fillStyle = 'rgba(255,255,255,'+(this.flash*0.6)+')';
@@ -4454,6 +5195,7 @@
       canvas.addEventListener('click', (e)=>{
         if(!document.body.classList.contains('fullscreen-mode')) return;
         if(window.__wiiKubbHelpOpen) return;
+        if(kubbGame.activeUnlockNotice){ kubbGame.dismissActiveUnlockNotice(); return; }
         if(kubbGame.state === 'confirmQuit'){
           const g = clientToGameCoords(e.clientX, e.clientY);
           kubbGame.confirmIndex = g.x < W/2 ? 0 : 1;
@@ -4512,6 +5254,7 @@
         clearLongPress();
         if(longPressFired){ longPressFired = false; e.preventDefault(); return; } // redan hanterat av START ovan
         if(window.__wiiKubbHelpOpen) return;
+        if(kubbGame.activeUnlockNotice){ kubbGame.dismissActiveUnlockNotice(); e.preventDefault(); return; } // samma skydd som musklicket: kvittera bort notisen istället för att låta tryckets position styra confirmQuit/menyn under den
         e.preventDefault(); // hindra en efterföljande "spöke-click" från att dubbeltrigga samma tryck
         const t = e.changedTouches[0];
         const dx = t.clientX - touchStartX, dy = t.clientY - touchStartY;
@@ -4594,7 +5337,8 @@
     const overlay = document.getElementById('textEntryOverlay');
     const input = document.getElementById('textEntryInput');
     const doneBtn = document.getElementById('textEntryDone');
-    if(!overlay || !input || !doneBtn) return;
+    const cancelBtn = document.getElementById('textEntryCancel');
+    if(!overlay || !input || !doneBtn || !cancelBtn) return;
 
     let mode = null; // 'name' | 'room' | null
 
@@ -4657,7 +5401,11 @@
       }
     });
     input.addEventListener('keydown', (e)=>{
-      if(e.key === 'Enter'){ e.preventDefault(); submitCurrent(); }
+      if(e.key === 'Enter'){ e.preventDefault(); submitCurrent(); e.stopPropagation(); return; }
+      // Escape ska kunna avbryta även medan man skriver i fältet - måste
+      // hanteras här uttryckligen eftersom e.stopPropagation() nedan annars
+      // hindrar den från att nå spelets egen tangentbordshanterare.
+      if(e.key === 'Escape'){ e.preventDefault(); input.blur(); kubbGame.requestQuitConfirm(); e.stopPropagation(); return; }
       e.stopPropagation(); // spelets egna tangentbordsgenvägar ska inte trigga medan man skriver
     });
     // Markera allt när fältet får fokus, så första knapptryckningen
@@ -4665,6 +5413,7 @@
     // måste radera det för hand först.
     input.addEventListener('focus', ()=> input.select());
     doneBtn.addEventListener('click', submitCurrent);
+    cancelBtn.addEventListener('click', ()=>{ input.blur(); kubbGame.requestQuitConfirm(); });
   })();
 })();
 </script>
