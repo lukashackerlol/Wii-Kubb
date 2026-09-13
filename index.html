@@ -376,6 +376,14 @@
   const TIGER_WALK_MIN = 8.5, TIGER_WALK_MAX = 12;   // hur lång tid en överkorsning tar (långsam smyggång)
   const TIGER_GAP_MIN = 5, TIGER_GAP_MAX = 9;        // paus mellan varje promenad
   const TIGER_Y = 64;                                 // fast marknivå, mitt på planen
+  // Tigern går på en fast marknivå (till skillnad från fiskmåsen, som flyger
+  // på olika höjder) så träfftoleransen behöver inte skalas efter avstånd -
+  // en enda fast tolerans räcker. Den är större än fiskmåsens eftersom
+  // tigern är betydligt större på skärmen. Vad som EGENTLIGEN ska hända när
+  // man träffar henne är ännu inte bestämt - se triggerTigerHit()/
+  // finishTigerHit() nedan för platshållaren i väntan på besked.
+  const TIGER_HIT_TOL = 13;
+  const TIGER_HIT_DUR = 1.1;                          // hur länge träff-animationen visas
   const OVER_CLOSEUP_DUR = 0.7, OVER_IMPACT_DUR = 0.35, OVER_REACT_DUR = 1.3;
   // "Jorden runt"-varianten är en längre, tydligare specialsekvens med ett eget
   // tajmings-moment: spelaren måste trycka A i rätt ögonblick för att fånga
@@ -433,11 +441,12 @@
   const TIME_ATTACK_START = 60;      // sekunder vid start
   const TIME_BONUS_PER_ROUND = 10;   // bonussekunder när en runda klaras
   // Stämningsläget eskalerar med rundan i lokalt läge (gäller aldrig
-  // online, där this.round alltid stannar på 1): natt -> berusad -> psykedelisk -> helvete.
+  // online, där this.round alltid stannar på 1): natt -> berusad -> psykedelisk -> helvete -> tiger.
   const NIGHT_FROM_ROUND = 6;         // efter runda 5
   const TIPSY_FROM_ROUND = 11;        // efter runda 10
   const PSYCHEDELIC_FROM_ROUND = 16;  // efter runda 15
   const HELL_FROM_ROUND = 20;         // från och med runda 20
+  const TIGER_STAGE_FROM_ROUND = 30;  // från och med runda 30 - men bara om LE TIGER MYSTIQUE är upplåst, se getVisualStage()
   const ACTIVE_STATES = new Set(['aim','power','throw']); // tillstånd där tid-utmaningens klocka ska ticka (bara lokalt läge)
   // OBS: 'overpower' (specialsekvensen som spelas upp när man kastar för
   // hårt/långt - ben/fiskmås/jorden-runt) ingår MEDVETET inte här. Klockan
@@ -450,6 +459,9 @@
   const SEAGULL_HIT_KEY = 'wiiKubbSeagullHit'; // sparar om spelaren någonsin träffat en fiskmås (låser upp jaktläges-genvägen)
   const SEAGULL_TOTAL_HITS_KEY = 'wiiKubbSeagullTotalHits'; // livstids-räknare över antal träffade fiskmåsar i jaktläget - återställs ALDRIG (varken mellan rundor eller nya spelomgångar)
   const HUNT_BEST_KEY = 'wiiKubbSeagullHuntBest'; // rekordmätare: högsta poäng (this.round) någonsin nådd i EN ENDA jaktomgång - till skillnad från SEAGULL_TOTAL_HITS_KEY ovan, som räknar ihop alla omgångar
+  const TIGER_HIT_KEY = 'wiiKubbTigerHit'; // sparar om spelaren någonsin träffat LeTigerMystique - låser upp att hon även dyker upp i jaktläget på natten, se huntTigerActive()
+  const TIGER_NIGHT_HIT_KEY = 'wiiKubbTigerNightHit'; // sparar om spelaren träffat henne på natten i jaktläget - låser upp ännu ett gömställe, se tigerAmbushActive()
+  const TIGER_AMBUSH_HIT_KEY = 'wiiKubbTigerAmbushHit'; // sparar om spelaren träffat henne i bakhållet (tidsutmaningen, runda 6) - låser upp att hon dyker upp som boss efter fenixen, se startSeagullBoss()
   const HAPPY_KING_HITS = 20; // när totalSeagullHits når denna gräns får Kungen ett litet glatt ansikte i de vanliga spellägena
   const SEAGULL_MENU_UNLOCK_HITS = 100; // när totalSeagullHits når denna gräns visas en liten meny (FISKMÅSJAKT/FISKMÅS) istället för att klick på fiskmås-ikonen hoppar rakt in i jaktläget
   // ---- livstidsstatistik som visas på achievements-fliken (se drawAchievements()) ----
@@ -544,6 +556,31 @@
   const BOSS_PHOENIX_HEAL_INTERVAL = 15;    // sekunder mellan varje gång hon helar sig ett steg, se updateBoss()
   const BOSS_PHOENIX_HEAL_AMOUNT = 3;       // hur många hp hon helar per gång ("ett steg")
   const BOSS_PHOENIX_HEAL_ANIM_DUR = 1.3;   // hur länge den helande rörelsen (stiger, glöder, gnistrar) visas
+  const BOSS_TIGER_DEFEAT_KEY = 'wiiKubbBossTigerDefeatedEver'; // sparar om spelaren någonsin besegrat LeTigerMystique som boss
+  // ---- LeTigerMystique (kind==='tiger', se startSeagullBoss): fjärde och
+  // sista boss-nivån, dyker upp efter fenixen - men bara om spelaren låst
+  // upp henne genom hela kedjan (klassiskt/tidsgräns -> jaktläget på natten
+  // -> bakhållet i tidsutmaningen på runda 6, se tigerAmbushActive()/
+  // markTigerAmbushHit()). Till skillnad från de flygande bossarna varken
+  // flaxar eller helar hon sig - hennes signaturdrag är istället att smyga
+  // fram och tillbaka på marken och med jämna mellanrum försvinna helt
+  // ("gömma sig", se updateTigerBoss()) innan hon dyker upp på en ny plats -
+  // omöjlig att träffa medan hon är gömd. Samma tema som resten av kedjan:
+  // man vet aldrig var hon är.
+  const BOSS_TIGER_HP = 10;                     // tål lite mer än de andra - hon är den sista, svåraste nivån
+  const BOSS_TIGER_TIME_LIMIT = 60;             // gott om tid, eftersom en del av den går åt till att hon är gömd
+  const BOSS_TIGER_HIT_TOL = 16;                // ungefär mellan BOSS_PHOENIX_HIT_TOL och BOSS_CROWN_HIT_TOL - hon är stor men smyger
+  const BOSS_TIGER_WALK_SPEED = 55;             // px/sekund hon smyger fram och tillbaka i
+  const BOSS_TIGER_X_MIN = 20, BOSS_TIGER_X_MAX = 140; // hur långt åt vardera hållet hon rör sig
+  const BOSS_TIGER_HIDE_GAP_MIN = 2.5, BOSS_TIGER_HIDE_GAP_MAX = 4.5;   // hur länge hon smyger innan hon gömmer sig igen
+  const BOSS_TIGER_HIDE_DUR_MIN = 1.2, BOSS_TIGER_HIDE_DUR_MAX = 2.2;   // hur länge hon är gömd (och omöjlig att träffa)
+  // Rena syn-villor: vanliga tigrar (samma utseende som drawPlainTiger(),
+  // ingen basker/mustasch) som smyger fram och tillbaka SAMTIDIGT som den
+  // riktiga LE TIGER MYSTIQUE under bosstriden - tillsammans med henne blir
+  // det fyra tigrar som rör sig på planen, så man aldrig genast ser vilken
+  // som är den riktiga (se updateTigerBoss()/drawSceneTopDown()). Rent
+  // dekorativa - träffar dem gör ingenting, bara hennes egen hitbox räknas.
+  const BOSS_TIGER_DECOY_Y_OFFSETS = [-20, -8, 12]; // tre villo-tigrar på egna "banor" ovanför/under hennes egen TIGER_Y
 
   // ---- online-duell (Realtime Database) ----
   // Samma teckenuppsättning som ROOM_CODE_CHARSET i WiiKubbCloud-modulen
@@ -670,7 +707,7 @@
       this.ctx.scale(3,3);
       this.audio = new AudioEngine();
 
-      this.state = 'menu'; // menu, aim, power, throw, overpower, kingfall, seagullhit, roundclear, gameover, nameentry, highscoreList, achievements, confirmQuit, roomCodeEntry, roomBusy, onlineLobby, roomJoinError, onlineWait, onlineRoundResult
+      this.state = 'menu'; // menu, aim, power, throw, overpower, kingfall, seagullhit, tigerhit, roundclear, gameover, nameentry, highscoreList, achievements, confirmQuit, roomCodeEntry, roomBusy, onlineLobby, roomJoinError, onlineWait, onlineRoundResult
       this.gameMode = 'classic'; // 'classic' | 'timeattack' - bara relevant i lokalt läge
       this.menuScreen = 'main'; // 'main' | 'local' | 'online' - vilken menyskärm som visas medan state==='menu'
       this.menuIndex = 0;
@@ -689,6 +726,9 @@
       this.lastPlayedThrowTs = 0; // undviker att spela upp motståndarens senaste kast två gånger
       this.lastSeenMessageAt = 0; // undviker att visa samma meddelande om och om igen
       this.hasHitSeagull = this.loadSeagullHitFlag(); // styr om den lilla fiskmåsen visas på highscore-fliken
+      this.hasHitTiger = this.loadTigerHitFlag(); // låser upp att LeTigerMystique även dyker upp i jaktläget på natten, se huntTigerActive()
+      this.hasHitTigerAtNight = this.loadTigerNightHitFlag(); // låser upp att hon dyker upp igen i tidsutmaningen på runda 6, se tigerAmbushActive()
+      this.hasHitTigerAmbush = this.loadTigerAmbushHitFlag(); // låser upp att hon dyker upp som boss efter fenixen, se startSeagullBoss()
       this.totalSeagullHits = this.loadSeagullTotalHits(); // livstids-räknare, se SEAGULL_TOTAL_HITS_KEY - laddas en gång och räknas sedan bara uppåt
       this.huntBest = this.loadHuntBest(); // rekordmätare för jaktläget (högsta poäng i EN omgång), se HUNT_BEST_KEY
       this.dodgeBest = this.loadDodgeBest(); // livstidsrekord i duckningsläget, se DODGE_BEST_KEY
@@ -701,6 +741,7 @@
       this.hasDefeatedBossEver = this.loadBossDefeatFlag(); // styr om troféansiktet visas på achievements-fliken
       this.hasDefeatedBossKingEver = this.loadBossKingDefeatFlag(); // uppgraderar troféansiktet till den krönta varianten
       this.hasDefeatedBossPhoenixEver = this.loadBossPhoenixDefeatFlag(); // låser upp eld-trofén (se drawAchievements()/drawSeagull())
+      this.hasDefeatedBossTigerEver = this.loadBossTigerDefeatFlag(); // livstidsflagga - besegrat henne som boss minst en gång (se drawAchievements()/drawTiger())
       // ---- upplåsningsnotiser (se queueUnlockNotice()/flushPendingUnlockNotices()/
       // drawUnlockNotice()): upplåsningar som sker MITT UNDER en omgång samlas i
       // pendingUnlockNotices utan att avbryta spelet, och flyttas först över till
@@ -733,6 +774,7 @@
       this.trophyAngryOn = false;
       this.trophyKingOn = false;
       this.trophyPhoenixOn = false;
+      this.trophyTigerOn = false;
       this.nameChars = [];      // tecken som skrivs in vid nytt highscore
       this.nameCursor = 0;
       this.pendingHighscoreRound = 0;
@@ -761,10 +803,13 @@
       this.tiger = null; // {t,dur,dir} - LeTigerMystique som promenerar över planen i psykedeliskt läge, se isTigerStage()
       this.tigerCooldown = TIGER_GAP_MIN + Math.random()*(TIGER_GAP_MAX-TIGER_GAP_MIN);
       this.lastTigerDir = null;
+      this.tigerHitAnim = null; // {t,dur,x,y,dir} - spelas upp när man råkar träffa tigern, se triggerTigerHit()
       this.boss = null; // {hp,maxHp,timeLeft,t,x,y,dir,hitFlash,phase} - bossmåsen i jaktläget, se startSeagullBoss()
       this.bossDefeats = 0; // hur många bossar som besegrats denna session (jaktläget nollställer den vid varje ny omgång)
       this.bossJustDefeated = false; // flagga som styr finishSeagullHit() till boss-grenen istället för vanlig poäng
+      this.tigerDefeatRound = null; // this.round-värdet när LE TIGER MYSTIQUE besegrades som boss denna omgång - null = ännu inte besegrad. Styr regnbågs-stämningsläget, se getVisualStage()
       this.hasDefeatedKingThisRun = false; // spärrar eld-stämningsläget i jaktläget tills kungen besegrats denna omgång, se getVisualStage()
+      this.hasDefeatedPhoenixThisRun = false; // släpper fram tiger-stämningsläget DIREKT efter fenixen besegrats denna omgång, se getVisualStage()
       this.currentStage = 'normal'; // stämningsläge för lokalt läge, se getVisualStage()
       this.hellParticles = []; // eldgnistor i helvete-läget
 
@@ -843,6 +888,13 @@
       this.lastSeagullDir = null;
       this.tiger = null;
       this.tigerCooldown = TIGER_GAP_MIN + Math.random()*(TIGER_GAP_MAX-TIGER_GAP_MIN);
+      this.tigerHitAnim = null;
+      // Skydd mot att en boss (se startSeagullBoss(), bara tänkt för
+      // jaktläget) hänger kvar från en tidigare, avbruten jaktläges-omgång
+      // och dyker upp i classic/tidsutmaning också - varken huvudloopen
+      // eller drawSceneTopDown() kollar gameMode innan de kollar this.boss.
+      this.boss = null;
+      this.bossJustDefeated = false;
       // Sikte och kraftmätare accelererar för varje runda för en tydligare
       // svårighetskurva.
       this.aimSpeed = 2.6 + (this.round-1)*0.2;
@@ -912,6 +964,84 @@
           ctx.translate(cx, cy);
           ctx.scale(0.85, 0.85);
           this.drawSeagull(0, 0, false, -1);
+          ctx.restore();
+        }
+      });
+    }
+    // ---- flagga: har spelaren någonsin träffat LeTigerMystique? ----
+    // Låser upp att hon även dyker upp i jaktläget på natten (se
+    // huntTigerActive()) - hon går över samtidigt som fiskmåsarna flyger
+    // som vanligt där. Notistexten avslöjar INTE var hon dyker upp härnäst
+    // (bara att hon sprang iväg och gömde sig) - det är avsiktligt, spelaren
+    // ska inte veta exakt var hon gömmer sig.
+    loadTigerHitFlag(){
+      try{ return localStorage.getItem(TIGER_HIT_KEY) === '1'; }catch(e){ return false; }
+    }
+    markTigerHit(){
+      if(this.hasHitTiger) return; // redan upplåst, inget mer att spara
+      this.hasHitTiger = true;
+      try{ localStorage.setItem(TIGER_HIT_KEY, '1'); }catch(e){}
+      this.queueUnlockNotice({
+        name: 'LE TIGER MYSTIQUE',
+        desc: 'SPRANG IVÄG OCH GÖMDE SIG',
+        draw: (cx,cy)=>{
+          const ctx = this.ctx;
+          ctx.save();
+          ctx.translate(cx, cy);
+          ctx.scale(0.6, 0.6);
+          this.drawTiger(0, 14, -1, 0);
+          ctx.restore();
+        }
+      });
+    }
+    // ---- flagga: har spelaren träffat henne på natten i jaktläget (se
+    // huntTigerActive())? Precis samma idé som ovan - hon sprang iväg och
+    // gömde sig igen, den här gången någon annanstans. Låser upp att hon
+    // dyker upp igen i tidsutmaningen, specifikt på runda 6, se
+    // tigerAmbushActive().
+    loadTigerNightHitFlag(){
+      try{ return localStorage.getItem(TIGER_NIGHT_HIT_KEY) === '1'; }catch(e){ return false; }
+    }
+    markTigerNightHit(){
+      if(this.hasHitTigerAtNight) return; // redan upplåst, inget mer att spara
+      this.hasHitTigerAtNight = true;
+      try{ localStorage.setItem(TIGER_NIGHT_HIT_KEY, '1'); }catch(e){}
+      this.queueUnlockNotice({
+        name: 'LE TIGER MYSTIQUE',
+        desc: 'SPRANG IVÄG OCH GÖMDE SIG',
+        draw: (cx,cy)=>{
+          const ctx = this.ctx;
+          ctx.save();
+          ctx.translate(cx, cy);
+          ctx.scale(0.6, 0.6);
+          this.drawTiger(0, 14, -1, 0);
+          ctx.restore();
+        }
+      });
+    }
+    // ---- flagga: har spelaren träffat henne i bakhållet (tidsutmaningen,
+    // runda 6, se tigerAmbushActive())? Sista länken i kedjan - låser upp att
+    // hon dyker upp som en fjärde och sista bossnivå efter fenixen i
+    // jaktläget, se startSeagullBoss(). Notistexten avslöjar INTE detta -
+    // precis som de två tidigare upplåsningarna låtsas den bara vara ännu en
+    // gång hon sprang iväg och gömde sig, spelaren ska överraskas av
+    // bossmötet, inte förvarnas om det.
+    loadTigerAmbushHitFlag(){
+      try{ return localStorage.getItem(TIGER_AMBUSH_HIT_KEY) === '1'; }catch(e){ return false; }
+    }
+    markTigerAmbushHit(){
+      if(this.hasHitTigerAmbush) return; // redan upplåst, inget mer att spara
+      this.hasHitTigerAmbush = true;
+      try{ localStorage.setItem(TIGER_AMBUSH_HIT_KEY, '1'); }catch(e){}
+      this.queueUnlockNotice({
+        name: 'LE TIGER MYSTIQUE',
+        desc: 'SPRANG IVÄG OCH GÖMDE SIG',
+        draw: (cx,cy)=>{
+          const ctx = this.ctx;
+          ctx.save();
+          ctx.translate(cx, cy);
+          ctx.scale(0.6, 0.6);
+          this.drawTiger(0, 14, -1, 0);
           ctx.restore();
         }
       });
@@ -1083,6 +1213,19 @@
         draw: (cx,cy)=>{ const ctx=this.ctx; ctx.save(); ctx.translate(cx,cy); ctx.scale(0.9,0.9); this.drawPhoenixTrophyFace(); ctx.restore(); }
       });
     }
+    loadBossTigerDefeatFlag(){
+      try{ return localStorage.getItem(BOSS_TIGER_DEFEAT_KEY) === '1'; }catch(e){ return false; }
+    }
+    markBossTigerDefeatedEver(){
+      if(this.hasDefeatedBossTigerEver) return; // redan upplåst, inget mer att spara
+      this.hasDefeatedBossTigerEver = true;
+      try{ localStorage.setItem(BOSS_TIGER_DEFEAT_KEY, '1'); }catch(e){}
+      this.queueUnlockNotice({
+        name: 'TROFÉ: LE TIGER MYSTIQUE',
+        desc: 'DU BESEGRADE LE TIGER MYSTIQUE',
+        draw: (cx,cy)=>{ const ctx=this.ctx; ctx.save(); ctx.translate(cx,cy); ctx.scale(0.9,0.9); this.drawTigerTrophyFace(); ctx.restore(); }
+      });
+    }
     // ---- upplåsningsnotis-kön: se konstruktorn (pendingUnlockNotices/
     // unlockNoticeQueue/activeUnlockNotice) och drawUnlockNotice(). ----
     queueUnlockNotice(notice){
@@ -1215,6 +1358,7 @@
       if(this.hasDefeatedBossEver) order.push('trophyAngry');
       if(this.hasDefeatedBossKingEver) order.push('trophyKing');
       if(this.hasDefeatedBossPhoenixEver) order.push('trophyPhoenix');
+      if(this.hasDefeatedBossTigerEver) order.push('trophyTiger');
       return order;
     }
     moveAchievementFocus(dir){
@@ -1652,6 +1796,15 @@
         this.overAnim = null;
         this.audio.sfxOver();
         if(this.matchType === 'online') this.exitOnlineMatch();
+        // Nollställ en ev. pågående boss (se startSeagullBoss()) HÄR - annars
+        // lever this.boss kvar även efter man lämnat jaktläget, och varken
+        // huvudloopen (if(this.boss) this.updateBoss(dt) ...) eller
+        // drawSceneTopDown() (if(this.boss && this.boss.phase==='fight')...)
+        // kollar vilket gameMode man faktiskt är i - så bossen (och hennes
+        // tre villo-tigrar om det var LE TIGER MYSTIQUE) dök upp ovanpå,
+        // och styrde uppdateringen i, nästa spelläge man startade also.
+        this.boss = null;
+        this.bossJustDefeated = false;
         // Att avbryta jaktläget räknas inte som en avslutad omgång - man går
         // rakt till menyn precis som vid avbrott i övriga lägen, utan att
         // frågas om highscore-namn (se endGame()/qualifiesForHighscore()).
@@ -1761,6 +1914,9 @@
           this.audio.sfxLock();
         } else if(this.achievementFocus === 'trophyPhoenix' && this.hasDefeatedBossPhoenixEver){
           this.trophyPhoenixOn = !this.trophyPhoenixOn;
+          this.audio.sfxLock();
+        } else if(this.achievementFocus === 'trophyTiger' && this.hasDefeatedBossTigerEver){
+          this.trophyTigerOn = !this.trophyTigerOn;
           this.audio.sfxLock();
         } else {
           this.state = 'menu';
@@ -2401,10 +2557,15 @@
       this.seagullHitAnim = null;
       this.lastSeagullLevel = null;
       this.lastSeagullDir = null;
+      this.tiger = null;
+      this.tigerCooldown = TIGER_GAP_MIN + Math.random()*(TIGER_GAP_MAX-TIGER_GAP_MIN);
+      this.tigerHitAnim = null;
       this.boss = null;           // stor sur fiskmås-bossen, se startSeagullBoss()
       this.bossJustDefeated = false;
       this.bossDefeats = 0;
-      this.hasDefeatedKingThisRun = false; // spärrar eld-stämningsläget tills kungen besegrats denna omgång, se getVisualStage()
+      this.tigerDefeatRound = null; // nollställs varje ny omgång, se kommentar vid fältet ovan
+      this.hasDefeatedKingThisRun = false; // spärrar eld-/tiger-stämningsläget tills kungen besegrats denna omgång, se getVisualStage()
+      this.hasDefeatedPhoenixThisRun = false;
       this.aimSpeed = 2.6;
       this.powerSpeed = 3.6;
       this.state = 'aim';
@@ -2420,36 +2581,63 @@
     startSeagullBoss(){
       this.seagull = null;
       // Har man redan besegrat en boss denna omgång dyker nästa nivå upp
-      // istället: klassisk -> krönt fiskmåskung -> fenixfågel (se
-      // drawSeagullBoss/drawSeagullBossFront/drawPhoenixBoss) med en egen
-      // hälsningsreplik var. Fenixen är den sista nivån - fler besegrade
-      // bossar denna omgång ger bara fler fenixmöten.
-      const kind = this.bossDefeats === 0 ? 'classic' : (this.bossDefeats === 1 ? 'crown' : 'phoenix');
+      // istället: klassisk -> krönt fiskmåskung -> fenixfågel -> LE TIGER
+      // MYSTIQUE (se drawSeagullBoss/drawSeagullBossFront/drawPhoenixBoss/
+      // drawTiger) med en egen hälsningsreplik var. Tigern är den fjärde och
+      // sista nivån, men bara om spelaren låst upp henne genom hela kedjan
+      // (klassiskt/tidsgräns -> jaktläget på natten -> bakhållet i
+      // tidsutmaningen, se hasHitTigerAmbush/tigerAmbushActive/
+      // markTigerAmbushHit). Är hon INTE upplåst än anropas den här
+      // funktionen aldrig för bossDefeats>=3 (se bossLocked/finishSeagullHit)
+      // - jakten fortsätter då bara utan boss istället för att ge ännu en
+      // fenix. Fler besegrade bossar denna omgång efter tigern ger bara fler
+      // möten med henne.
+      const kind = this.bossDefeats === 0 ? 'classic'
+        : this.bossDefeats === 1 ? 'crown'
+        : this.bossDefeats === 2 ? 'phoenix'
+        : 'tiger';
       const nextFaceIn = kind === 'crown'
         ? BOSS_CROWN_FACE_GAP_MIN + Math.random()*(BOSS_CROWN_FACE_GAP_MAX-BOSS_CROWN_FACE_GAP_MIN)
         : kind === 'phoenix'
           ? BOSS_PHOENIX_FACE_GAP_MIN + Math.random()*(BOSS_PHOENIX_FACE_GAP_MAX-BOSS_PHOENIX_FACE_GAP_MIN)
           : BOSS_FACE_GAP_MIN + Math.random()*(BOSS_FACE_GAP_MAX-BOSS_FACE_GAP_MIN);
-      const hp = kind === 'phoenix' ? BOSS_PHOENIX_HP : BOSS_HP;
+      const hp = kind === 'phoenix' ? BOSS_PHOENIX_HP : (kind === 'tiger' ? BOSS_TIGER_HP : BOSS_HP);
       this.boss = {
         hp, maxHp: hp,
-        timeLeft: kind === 'phoenix' ? BOSS_PHOENIX_TIME_LIMIT : BOSS_TIME_LIMIT,
-        t: 0, x: 80, y: 55, dir: 1, hitFlash: 0,
-        facePlayer: false,   // true = vänd mot spelaren och flaxar, se updateBoss()
+        timeLeft: kind === 'phoenix' ? BOSS_PHOENIX_TIME_LIMIT : (kind === 'tiger' ? BOSS_TIGER_TIME_LIMIT : BOSS_TIME_LIMIT),
+        t: 0, x: 80, y: kind === 'tiger' ? TIGER_Y : 55, dir: 1, hitFlash: 0,
+        facePlayer: false,   // true = vänd mot spelaren och flaxar, se updateBoss() - oanvänt av tigern
         faceTimer: 0,        // hur länge kvar av den pågående vänd-mot-spelaren-stunden
         nextFaceIn,
         flapPhase: 0,        // animerar vingslaget medan facePlayer är true
-        kind,                // 'classic' | 'crown' | 'phoenix' - styr utseendet, se ovan
+        kind,                // 'classic' | 'crown' | 'phoenix' | 'tiger' - styr utseendet, se ovan
         // Fenixens självläkning - se updateBoss(). Oanvänt av de andra kinderna.
         healTimer: BOSS_PHOENIX_HEAL_INTERVAL,
         isHealing: false,    // true = spelar upp den helande rörelsen just nu
         healAnimT: 0,
         healBaseX: 80, healBaseY: 55, // positionen hon helar från, se updateBoss()
+        // LeTigerMystique som boss (kind==='tiger') - smyger fram och
+        // tillbaka och gömmer sig med jämna mellanrum, se updateTigerBoss().
+        // Oanvänt av de andra kinderna.
+        hidden: false,
+        hideTimer: BOSS_TIGER_HIDE_GAP_MIN + Math.random()*(BOSS_TIGER_HIDE_GAP_MAX-BOSS_TIGER_HIDE_GAP_MIN),
+        walkT: 0,
+        // Tre villo-tigrar som smyger runt SAMTIDIGT som henne (se
+        // BOSS_TIGER_DECOY_Y_OFFSETS ovan/updateTigerBoss()) - tillsammans
+        // fyra tigrar på planen. Bara this.boss.x/y (hennes egen position)
+        // räknas vid träffdetektion, se checkSeagullThrowCollision().
+        decoys: kind === 'tiger' ? BOSS_TIGER_DECOY_Y_OFFSETS.map(yOffset => ({
+          x: BOSS_TIGER_X_MIN + Math.random()*(BOSS_TIGER_X_MAX-BOSS_TIGER_X_MIN),
+          yOffset,
+          dir: Math.random() < 0.5 ? 1 : -1,
+          speed: BOSS_TIGER_WALK_SPEED * (0.7 + Math.random()*0.6),
+          walkT: Math.random()*10
+        })) : null,
         phase: 'fight' // 'fight' -> 'defeated' (fall-animationen, se triggerBossHit)
       };
       this.audio.sfxHit();
       this.shake = Math.max(this.shake, 8);
-      this.message = kind === 'crown' ? 'FISKMÅSKUNGEN ANLÄNDER!' : (kind === 'phoenix' ? 'FENIXFÅGELN VAKNAR!' : 'STOR SUR FISKMÅS!');
+      this.message = kind === 'crown' ? 'FISKMÅSKUNGEN ANLÄNDER!' : (kind === 'phoenix' ? 'FENIXFÅGELN VAKNAR!' : (kind === 'tiger' ? 'LE TIGER MYSTIQUE SMYGER FRAM!' : 'STOR SUR FISKMÅS!'));
       this.msgTimer = 1.6;
       this.state = 'aim';
       this.aimT = Math.random()*10;
@@ -2461,9 +2649,13 @@
     // Med jämna mellanrum slutar hon flyga i sidled, vänder sig rakt mot
     // spelaren och flaxar häftigt ett litet tag (facePlayer) innan hon
     // fortsätter flyga som vanligt - se drawSeagullBossFront().
+    // LE TIGER MYSTIQUE (kind==='tiger') flyger inte alls - hon har ett helt
+    // eget rörelsemönster (smyger på marken, gömmer sig periodvis), se
+    // updateTigerBoss() nedan.
     updateBoss(dt){
       const b = this.boss;
       if(!b || b.phase !== 'fight') return;
+      if(b.kind === 'tiger'){ this.updateTigerBoss(dt); return; }
       const crowned = b.kind === 'crown';
       const phoenix = b.kind === 'phoenix';
       const speedMult = crowned ? BOSS_CROWN_SPEED_MULT : (phoenix ? BOSS_PHOENIX_SPEED_MULT : 1);
@@ -2530,13 +2722,57 @@
         b.flapPhase = 0;
       }
     }
+    // LE TIGER MYSTIQUE som boss - smyger fram och tillbaka på marken mellan
+    // BOSS_TIGER_X_MIN/MAX (till skillnad från de flygande bossarna ovan) och
+    // försvinner helt med jämna mellanrum ("gömmer sig", hidden=true) innan
+    // hon dyker upp igen på en ny slumpad plats med ny riktning - omöjlig att
+    // träffa medan hidden är true, se checkSeagullThrowCollision(). Samma
+    // tema som resten av kedjan: man vet aldrig var hon är. walkT stiger
+    // hela tiden (även gömd) och driver samma smygande gånganimation som den
+    // vanliga tigern, se drawTiger()/tigerPos().
+    updateTigerBoss(dt){
+      const b = this.boss;
+      b.t += dt;
+      b.walkT += dt;
+      if(b.hitFlash > 0) b.hitFlash = Math.max(0, b.hitFlash - dt);
+      // Villo-tigrarna smyger vidare precis som vanligt oavsett om HON är
+      // gömd eller ej just nu - annars hade det varit alldeles för lätt att
+      // räkna ut vilken som är den riktiga (den enda som någonsin står still
+      // eller försvinner), se BOSS_TIGER_DECOY_Y_OFFSETS ovan.
+      if(b.decoys){
+        b.decoys.forEach(d=>{
+          d.walkT += dt;
+          d.x += d.dir * d.speed * dt;
+          if(d.x <= BOSS_TIGER_X_MIN){ d.x = BOSS_TIGER_X_MIN; d.dir = 1; }
+          else if(d.x >= BOSS_TIGER_X_MAX){ d.x = BOSS_TIGER_X_MAX; d.dir = -1; }
+        });
+      }
+      b.hideTimer -= dt;
+      if(b.hidden){
+        if(b.hideTimer <= 0){
+          b.hidden = false;
+          b.x = BOSS_TIGER_X_MIN + Math.random()*(BOSS_TIGER_X_MAX-BOSS_TIGER_X_MIN);
+          b.dir = Math.random() < 0.5 ? 1 : -1;
+          b.hideTimer = BOSS_TIGER_HIDE_GAP_MIN + Math.random()*(BOSS_TIGER_HIDE_GAP_MAX-BOSS_TIGER_HIDE_GAP_MIN);
+        }
+        return; // gömd - varken synlig eller träffbar denna stund
+      }
+      b.x += b.dir * BOSS_TIGER_WALK_SPEED * dt;
+      if(b.x <= BOSS_TIGER_X_MIN){ b.x = BOSS_TIGER_X_MIN; b.dir = 1; }
+      else if(b.x >= BOSS_TIGER_X_MAX){ b.x = BOSS_TIGER_X_MAX; b.dir = -1; }
+      if(b.hideTimer <= 0){
+        b.hidden = true;
+        b.hideTimer = BOSS_TIGER_HIDE_DUR_MIN + Math.random()*(BOSS_TIGER_HIDE_DUR_MAX-BOSS_TIGER_HIDE_DUR_MIN);
+      }
+    }
     // Tiden tog slut innan bossen besegrades - hon flyr utan att ge någon
     // belöning, och jaktläget fortsätter precis som vanligt igen.
     loseSeagullBoss(){
       const wasPhoenix = this.boss && this.boss.kind === 'phoenix';
+      const wasTiger = this.boss && this.boss.kind === 'tiger';
       this.boss = null;
       this.audio.sfxOver();
-      this.message = wasPhoenix ? 'FENIXEN FLYDDE!' : 'BOSSEN FLYDDE!';
+      this.message = wasPhoenix ? 'FENIXEN FLYDDE!' : (wasTiger ? 'LE TIGER MYSTIQUE FLYDDE!' : 'BOSSEN FLYDDE!');
       this.msgTimer = 1.4;
       this.throwAnim = null;
       this.state = 'aim';
@@ -2556,7 +2792,7 @@
       this.throwAnim = null;
       if(b.hp <= 0){
         b.phase = 'defeated';
-        this.message = b.kind === 'phoenix' ? 'FENIXEN BESEGRAD!' : 'BOSSEN BESEGRAD!';
+        this.message = b.kind === 'phoenix' ? 'FENIXEN BESEGRAD!' : (b.kind === 'tiger' ? 'LE TIGER MYSTIQUE BESEGRAD!' : 'BOSSEN BESEGRAD!');
         this.msgTimer = 1.6;
         this.bossJustDefeated = true;
         this.seagullHitAnim = {t:0, dur:BOSS_HIT_DUR, x, y, scale:1, dir:b.dir, boss:true, bossKind:b.kind};
@@ -2571,8 +2807,8 @@
     }
     // Anropas från finishSeagullHit() sedan besegrad-animationen spelats
     // klart. Belöningen är visuell: ett troféansikte på highscore-fliken (se
-    // markBossDefeatedEver/markBossKingDefeatedEver/markBossPhoenixDefeatedEver
-    // och drawHighscoreList()).
+    // markBossDefeatedEver/markBossKingDefeatedEver/markBossPhoenixDefeatedEver/
+    // markBossTigerDefeatedEver och drawAchievements()).
     onBossDefeated(){
       this.bossDefeats++;
       const kind = this.boss ? this.boss.kind : 'classic';
@@ -2582,6 +2818,10 @@
         this.hasDefeatedKingThisRun = true; // släpper spärren på eld-stämningsläget, se getVisualStage()
       } else if(kind === 'phoenix'){
         this.markBossPhoenixDefeatedEver();
+        this.hasDefeatedPhoenixThisRun = true; // släpper fram tiger-stämningsläget direkt, se getVisualStage()
+      } else if(kind === 'tiger'){
+        this.markBossTigerDefeatedEver();
+        this.tigerDefeatRound = this.round; // startar nedräkningen till regnbågs-stämningsläget, se getVisualStage()
       }
       this.boss = null;
     }
@@ -2711,9 +2951,11 @@
         }
       });
     }
-    // ---- LeTigerMystique: går till fots över planen istället för fiskmåsen,
-    // bara medan isTigerStage() är sant. Rent atmosfärisk - ingen träff-
-    // detektion, ingen poäng, precis som kubbspökena (drawGhostKubbs).
+    // ---- LeTigerMystique: går till fots över planen, antingen istället för
+    // fiskmåsen (isTigerStage()) eller bredvid den i jaktläget på natten
+    // (huntTigerActive(), se tigerWalkActive()). Sedan checkTigerThrowCollision()
+    // tillkom går det faktiskt att träffa henne - hon är inte längre bara
+    // atmosfärisk som kubbspökena (drawGhostKubbs).
     tigerPos(){
       const s = this.tiger;
       if(!s) return null;
@@ -2723,7 +2965,7 @@
       return { x: x0 + (x1-x0)*p, y: TIGER_Y, dir: s.dir, walkT: s.t };
     }
     updateTiger(dt){
-      if(!this.isTigerStage() || !this.seagullActive()){ this.tiger = null; return; }
+      if(!this.tigerWalkActive() || !this.seagullActive()){ this.tiger = null; return; }
       if(this.tiger){
         this.tiger.t += dt;
         if(this.tiger.t >= this.tiger.dur){
@@ -2754,7 +2996,13 @@
         this.updateTiger(dt);
         return;
       }
-      this.tiger = null;
+      // Jaktläget på natten (om spelaren låst upp henne, se
+      // huntTigerActive()): tigern går över SAMTIDIGT som fiskmåsarna
+      // fortsätter flyga precis som vanligt - hon ersätter dem inte här,
+      // så till skillnad från grenen ovan nollställs inte this.seagull.
+      // updateTiger() nollställer this.tiger själv när huntTigerActive()
+      // inte längre stämmer (t.ex. dagen gryr eller man lämnar jaktläget).
+      this.updateTiger(dt);
       if(!this.seagullActive()){ this.seagull = null; return; }
       if(this.seagull){
         this.seagull.t += dt;
@@ -2814,9 +3062,24 @@
     // att träffa än en nära, men aldrig omöjlig.
     checkSeagullThrowCollision(){
       if(!this.throwAnim || this.throwAnim.birdHit) return;
+      // LeTigerMystique ersätter fiskmåsen helt under det psykedeliska
+      // stämningsläget (se isTigerStage()/updateSeagull()) - då är det henne
+      // kastet ska kollas mot istället, inte den vanliga måsen eller bossen.
+      if(this.isTigerStage()){ this.checkTigerThrowCollision(); return; }
+      // Jaktläget på natten (om upplåst, se huntTigerActive()): hon går över
+      // SAMTIDIGT som fiskmåsarna/bossen, så båda kollisionerna måste kollas
+      // - kolla henne först; om kastet redan gått åt till en tigerträff
+      // (state blir 'tigerhit') är det inget kvar att kolla mot måsen med.
+      if(this.huntTigerActive()){
+        this.checkTigerThrowCollision();
+        if(this.state === 'tigerhit') return;
+      }
       // Bossen (om en är i luften) tar över kollisionsmålet helt från den
-      // vanliga småmåsen - se startSeagullBoss()/seagullActive().
-      const bossActive = this.boss && this.boss.phase === 'fight';
+      // vanliga småmåsen - se startSeagullBoss()/seagullActive(). LE TIGER
+      // MYSTIQUE som boss är dock omöjlig att träffa medan hon är gömd (se
+      // updateTigerBoss()) - då räknas hon som inaktiv precis som om ingen
+      // boss alls vore i luften (kastet bara fortsätter, missar allt).
+      const bossActive = this.boss && this.boss.phase === 'fight' && !(this.boss.kind === 'tiger' && this.boss.hidden);
       const pos = bossActive ? {x:this.boss.x, y:this.boss.y} : this.seagullPos();
       if(!pos) return;
       const a = this.throwAnim;
@@ -2828,9 +3091,10 @@
       // Bossen är stor - hon har en fast, generös träfftolerans istället för
       // att skalas efter avstånd som den vanliga (mindre) måsen. Fiskmåskungen
       // (kind==='crown') är däremot betydligt svårare att träffa, se
-      // BOSS_CROWN_HIT_TOL.
+      // BOSS_CROWN_HIT_TOL. LE TIGER MYSTIQUE (kind==='tiger') ligger
+      // ungefär mitt emellan, se BOSS_TIGER_HIT_TOL.
       const tol = bossActive
-        ? (this.boss.kind === 'crown' ? BOSS_CROWN_HIT_TOL : (this.boss.kind === 'phoenix' ? BOSS_PHOENIX_HIT_TOL : BOSS_HIT_TOL))
+        ? (this.boss.kind === 'crown' ? BOSS_CROWN_HIT_TOL : (this.boss.kind === 'phoenix' ? BOSS_PHOENIX_HIT_TOL : (this.boss.kind === 'tiger' ? BOSS_TIGER_HIT_TOL : BOSS_HIT_TOL)))
         : (this.gameMode === 'seagullhunt' ? HUNT_HIT_TOL : SEAGULL_HIT_TOL) * this.seagullScaleForY(pos.y);
       if(Math.hypot(x-pos.x, y-pos.y) < tol){
         a.birdHit = true;
@@ -2880,7 +3144,17 @@
           this.huntBest = this.round;
           this.saveHuntBest();
         }
-        if(!this.boss && this.round % BOSS_TRIGGER_HITS === 0){
+        // Ingen fjärde boss (varken tiger eller ännu en fenix) förrän
+        // spelaren faktiskt hittat LE TIGER MYSTIQUE i bakhållet (se
+        // markTigerAmbushHit/hasHitTigerAmbush) - har man redan besegrat
+        // klassisk/krönt/fenix denna omgång men inte låst upp henne än
+        // fortsätter jakten bara utan boss tills omgången är slut. Och när
+        // hon VÄL besegrats som boss (tigerDefeatRound satt) tar bossarna
+        // helt slut för den här omgången - hon kommer inte tillbaka var
+        // 10:e träff efteråt, se getVisualStage() för regnbågsläget som tar
+        // vid istället.
+        const bossLocked = (this.bossDefeats >= 3 && !this.hasHitTigerAmbush) || this.tigerDefeatRound !== null;
+        if(!this.boss && !bossLocked && this.round % BOSS_TRIGGER_HITS === 0){
           this.startSeagullBoss();
           return;
         }
@@ -2888,6 +3162,105 @@
         this.aimT = Math.random()*10;
         return;
       }
+      this.batons--;
+      if(this.batons <= 0){
+        this.audio.sfxOver();
+        this.endGame();
+        return;
+      }
+      this.state = 'aim';
+      this.aimT = Math.random()*10;
+    }
+    // ---- LeTigerMystique: nu kan man faktiskt träffa henne (se
+    // checkSeagullThrowCollision() ovan, som grenar hit istället - eller
+    // dessutom, i jaktläget på natten - när isTigerStage()/huntTigerActive()
+    // är sant). Samma kastbågeformel som mot fiskmåsen
+    // (checkSeagullThrowCollision) - bara målet och toleransen skiljer sig.
+    checkTigerThrowCollision(){
+      const pos = this.tigerPos();
+      if(!pos) return;
+      const a = this.throwAnim;
+      const tt = Math.min(1, a.t/a.dur);
+      const x = a.x0 + (a.x1-a.x0)*tt;
+      const yLinear = a.y0 + (a.y1-a.y0)*tt;
+      const arc = Math.sin(Math.PI*tt) * 14;
+      const y = yLinear - arc;
+      if(Math.hypot(x-pos.x, y-pos.y) < TIGER_HIT_TOL){
+        a.birdHit = true; // återanvänder samma flagga som fiskmåsen så kastet inte kan träffa flera gånger
+        this.triggerTigerHit(pos.x, pos.y);
+      }
+    }
+    // ÄNNU BARA EN PLATSHÅLLARE: vad som EGENTLIGEN ska hända när man träffar
+    // tigern är inte bestämt än - det kommer separata besked om den
+    // detaljen, ett för klassiskt/tidsgräns-läge och ett för jaktläget på
+    // natten (se finishTigerHit() nedan, som redan grenar mellan de två
+    // fallen och väntar på besked för var sin gren). Just nu spelas en egen
+    // liten "tigerhit"-scen upp (samma idé som seagullhit, se
+    // drawTigerHitScene()) oavsett läge - det är bara VAD som händer EFTER
+    // den scenen som skiljer sig åt/återstår att bestämma.
+    triggerTigerHit(x,y){
+      // Vanliga tigrar (isPlainTigerStage()) är bara djur i vägen - ingen
+      // hemlighet att låsa upp, till skillnad från LE TIGER MYSTIQUE.
+      if(!this.isPlainTigerStage()) this.markTigerHit(); // låser upp att hon syns i jaktläget på natten (se huntTigerActive()), om det inte redan skett
+      // Träffades hon just nu UNDER den natt-jakt-lägesvisningen (se
+      // huntTigerActive())? Då låser den träffen upp nästa gömställe också -
+      // se markTigerNightHit()/tigerAmbushActive(). VIKTIGT: kollar
+      // huntTigerActive() specifikt, INTE bara gameMode==='seagullhunt' -
+      // annars skulle en helt vanlig, otraffbar-i-praktiken atmosfärstiger
+      // (isPlainTigerStage(), som också kan förekomma i jaktläget efter att
+      // hela kedjan redan är upplåst) råka trigga samma upplåsning, av fel
+      // anledning. Har bara märkts av än så länge eftersom ordningen i
+      // upplåsningskedjan råkat göra det ofarligt - men fel är fel.
+      if(this.huntTigerActive()) this.markTigerNightHit();
+      this.audio.sfxHit(); this.shake = 8;
+      this.message = this.isPlainTigerStage() ? 'TRÄFFADE EN TIGER!' : 'TRÄFFADE TIGERN!';
+      this.msgTimer = 1.3;
+      this.tigerHitAnim = {t:0, dur:TIGER_HIT_DUR, x, y, dir: this.tiger ? this.tiger.dir : 1};
+      this.tiger = null;
+      this.throwAnim = null;
+      this.state = 'tigerhit';
+    }
+    updateTigerHit(dt){
+      const a = this.tigerHitAnim;
+      if(!a) return;
+      a.t += dt;
+      if(a.t >= a.dur){
+        this.tigerHitAnim = null;
+        this.finishTigerHit();
+      }
+    }
+    finishTigerHit(){
+      this.tigerCooldown = TIGER_GAP_MIN + Math.random()*(TIGER_GAP_MAX-TIGER_GAP_MIN);
+      if(this.gameMode === 'seagullhunt'){
+        // ---- HÄR KOMMER "EN TILL GREJ" (nummer två, se markTigerNightHit()
+        // ovan) IN - besked om exakt vad som ska hända när man träffar
+        // tigern HÄR (i jaktläget på natten) kommer snart och ska ersätta
+        // kroppen i denna gren. Tills dess: ingen effekt alls utöver själva
+        // träffscenen, bara tillbaka till sikte - varken poäng (som en
+        // vanlig fiskmåsträff ger) eller någon förlust, så det inte råkar
+        // bli "rätt" av misstag åt någotdera hållet innan beskedet kommer.
+        this.state = 'aim';
+        this.aimT = Math.random()*10;
+        return;
+      }
+      if(this.tigerAmbushActive()){
+        // Sista länken i kedjan (klassiskt/tidsgräns-träff -> jaktläget på
+        // natten -> HÄR, bakhållet på runda 6 i tidsutmaningen): en träff
+        // låser upp att hon dyker upp som en fjärde och sista bossnivå efter
+        // fenixen i jaktläget, se markTigerAmbushHit()/startSeagullBoss().
+        // Ingen ytterligare effekt just nu i tidsutmaningen själv - varken
+        // poäng eller förlust, precis som grenen ovan - bakhållet är bara
+        // dörren in till bossmötet, inte en belöning i sig här.
+        this.markTigerAmbushHit();
+        this.state = 'aim';
+        this.aimT = Math.random()*10;
+        return;
+      }
+      // ---- HÄR KOMMER DEN SÄRSKILDA EFFEKTEN IN för det vanliga
+      // klassiskt/tidsgräns-fallet (det psykedeliska stämningsläget) när
+      // beskedet om vad som ska hända kommer - byt ut kroppen nedan mot
+      // det. Tills dess: samma konsekvens som att råka träffa fiskmåsen
+      // (kastet räknas som förlorat).
       this.batons--;
       if(this.batons <= 0){
         this.audio.sfxOver();
@@ -3080,6 +3453,13 @@
           this.audio.sfxLock();
           return;
         }
+        if(this.hasDefeatedBossTigerEver && inBox(this._decoTrophyTigerBox)){
+          e.stopImmediatePropagation();
+          this.achievementFocus = 'trophyTiger';
+          this.trophyTigerOn = !this.trophyTigerOn;
+          this.audio.sfxLock();
+          return;
+        }
       });
     }
 
@@ -3116,7 +3496,14 @@
     }
     // fallProgress (0-1) är valfri: om satt ritas kungen mitt i en tippande
     // fall-animation istället för i sitt stående eller helt fallna läge.
+    // this.trophyTigerOn (se drawAchievements()) byter ut hela figuren mot
+    // LE TIGER MYSTIQUE själv (se drawKingAsTiger nedan) istället för att
+    // bara klä ut klosskungen - bara kosmetiskt, precis som de tre andra
+    // troféerna (drawSeagull()).
     drawKing(x,y,fallen,fallProgress){
+      if(this.trophyTigerOn){ this.drawKingAsTiger(x,y,fallen,fallProgress); return; }
+      const kingOutline = PAL.darkest;
+      const kingBody = PAL.dark;
       if(fallProgress !== undefined && fallProgress !== null){
         const ctx = this.ctx;
         const p = Math.min(1, Math.max(0, fallProgress));
@@ -3129,13 +3516,13 @@
         ctx.translate(x, groundY);
         ctx.rotate(angle);
         ctx.translate(-x, -groundY);
-        this.rect(x-5, y-11, 10, 22, PAL.darkest);
-        this.rect(x-4, y-10, 8, 20, PAL.dark);
-        this.rect(x-6, y-15, 12, 4, PAL.darkest);
-        this.rect(x-6, y-18, 2, 4, PAL.darkest);
-        this.rect(x-1, y-19, 2, 5, PAL.darkest);
-        this.rect(x+4, y-18, 2, 4, PAL.darkest);
-        this.rect(x-4, y-3, 8, 1, PAL.darkest);
+        this.rect(x-5, y-11, 10, 22, kingOutline);
+        this.rect(x-4, y-10, 8, 20, kingBody);
+        this.rect(x-6, y-15, 12, 4, kingOutline);
+        this.rect(x-6, y-18, 2, 4, kingOutline);
+        this.rect(x-1, y-19, 2, 5, kingOutline);
+        this.rect(x+4, y-18, 2, 4, kingOutline);
+        this.rect(x-4, y-3, 8, 1, kingOutline);
         ctx.restore();
         // litet dammoln som poffar upp precis när han landar
         if(p > 0.7){
@@ -3150,13 +3537,13 @@
         return;
       }
       if(!fallen){
-        this.rect(x-5, y-11, 10, 22, PAL.darkest);
-        this.rect(x-4, y-10, 8, 20, PAL.dark);
-        this.rect(x-6, y-15, 12, 4, PAL.darkest);
-        this.rect(x-6, y-18, 2, 4, PAL.darkest);
-        this.rect(x-1, y-19, 2, 5, PAL.darkest);
-        this.rect(x+4, y-18, 2, 4, PAL.darkest);
-        this.rect(x-4, y-3, 8, 1, PAL.darkest);
+        this.rect(x-5, y-11, 10, 22, kingOutline);
+        this.rect(x-4, y-10, 8, 20, kingBody);
+        this.rect(x-6, y-15, 12, 4, kingOutline);
+        this.rect(x-6, y-18, 2, 4, kingOutline);
+        this.rect(x-1, y-19, 2, 5, kingOutline);
+        this.rect(x+4, y-18, 2, 4, kingOutline);
+        this.rect(x-4, y-3, 8, 1, kingOutline);
         // Litet glatt ansikte när spelaren träffat tillräckligt många
         // fiskmåsar totalt i jaktläget (se HAPPY_KING_HITS) - bara på
         // Kungen i vanligt stående läge, inte medan han faller/ligger ner.
@@ -3166,8 +3553,54 @@
           this.rect(x-2, y-5, 4, 1, PAL.lightest);
         }
       } else {
-        this.rect(x-11, y+3, 22, 7, PAL.darkest);
-        this.rect(x-10, y+4, 20, 5, PAL.dark);
+        this.rect(x-11, y+3, 22, 7, kingOutline);
+        this.rect(x-10, y+4, 20, 5, kingBody);
+      }
+    }
+    // ---- LE TIGER MYSTIQUE istället för klosskungen (this.trophyTigerOn,
+    // se drawKing ovan) - återanvänder den RIKTIGA tigersprajten (drawTiger,
+    // samma som smyger över planen och som bossnivå) rakt av istället för
+    // att bara ge klosskungens siluett tigerfärger/ränder. walkT=0 ger en
+    // "vilo-pose" (samma som när hon just dykt upp, se startSeagullBoss).
+    // Tippnings-/fall-animationen (fallProgress) och den liggande slutposen
+    // (fallen) återanvänder klosskungens egna vinklar/rotationer så hon
+    // faller precis lika naturligt som han gjorde, bara med hennes siluett
+    // istället för hans.
+    drawKingAsTiger(x,y,fallen,fallProgress){
+      const ctx = this.ctx;
+      if(fallProgress !== undefined && fallProgress !== null){
+        const p = Math.min(1, Math.max(0, fallProgress));
+        const settle = p < 0.85 ? p/0.85 : 1;
+        const angle = (Math.PI/2) * settle + Math.sin(Math.min(1,p*1.3)*Math.PI) * (p>0.85?0.06:0);
+        const groundY = y + 11;
+        ctx.save();
+        ctx.translate(x, groundY);
+        ctx.rotate(angle);
+        ctx.translate(-x, -groundY);
+        this.drawTiger(x, y, 1, 0);
+        ctx.restore();
+        if(p > 0.7){
+          const dustA = 1 - (p-0.7)/0.3;
+          ctx.save();
+          ctx.globalAlpha = Math.max(0, dustA) * 0.7;
+          this.rect(x-15, groundY-2, 6, 3, PAL.dark);
+          this.rect(x+9, groundY-2, 6, 3, PAL.dark);
+          this.rect(x-3, groundY-5, 6, 3, PAL.dark);
+          ctx.restore();
+        }
+        return;
+      }
+      if(!fallen){
+        this.drawTiger(x, y, 1, 0);
+      } else {
+        // helt omkullvält, liggande på sidan - samma 90°-rotation runt
+        // fotpunkten som tippnings-animationen ovan slutar i.
+        ctx.save();
+        ctx.translate(x, y+11);
+        ctx.rotate(Math.PI/2);
+        ctx.translate(-x, -(y+11));
+        this.drawTiger(x, y, 1, 0);
+        ctx.restore();
       }
     }
     drawBaton(x,y,rot,scale){
@@ -3381,12 +3814,27 @@
 
     // ---- stämningsläge (lokalt läge) - eskalerar med rundan ----
     // 1-5: normalt · 6-10: natt · 11-15: berusad (svajande) · 16-19: psykedeliskt
-    // (regnbågsfärger + kubbspöken) · 20+: helvete (eld + kubbarna darrar).
+    // (regnbågsfärger + kubbspöken) · 20-29: helvete (eld + kubbarna darrar) ·
+    // 30+: tiger (svart/orange randig bakgrund i samma färger som LE TIGER
+    // MYSTIQUE) - men bara om spelaren låst upp henne (hasHitTigerAmbush,
+    // se markTigerAmbushHit()), annars stannar det på helvete för alltid.
+    // I JAKTLÄGET (seagullhunt) styrs tiger-läget INTE av rundnumret utan av
+    // om fenixen faktiskt besegrats denna omgång (hasDefeatedPhoenixThisRun,
+    // se onBossDefeated()) - annars hade tiger-bakgrunden redan dykt upp
+    // MITT UNDER fenixstriden (fenixen triggas exakt vid runda 30, samma
+    // tröskel som TIGER_STAGE_FROM_ROUND). Nu kommer den istället på DIREKT
+    // efter segern över fenixen, om hon är upplåst.
     // Rena visuella lager ovanpå samma spellogik - KUBB_XS/träffdetektion rörs
     // aldrig, bara hur saker RITAS.
     getVisualStage(){
       if(this.matchType === 'online') return 'normal';
       if(this.state === 'menu' || this.state === 'highscoreList' || this.state === 'achievements') return 'normal';
+      // Sedan LE TIGER MYSTIQUE besegrats som boss (se onBossDefeated/
+      // tigerDefeatRound) tar regnbågsläget vid - BOSS_TRIGGER_HITS träffar
+      // efter segern, precis vid punkten där nästa boss annars hade dykt
+      // upp (se bossLocked i finishSeagullHit()). Ingen boss här ännu, bara
+      // en ny bakgrund som platshållare för en framtida femte nivå.
+      if(this.tigerDefeatRound !== null && this.round >= this.tigerDefeatRound + BOSS_TRIGGER_HITS) return 'rainbow';
       if(this.round >= HELL_FROM_ROUND){
         // I jaktläget hålls stämningsläget kvar på "psykedeliskt" tills
         // spelaren besegrat fiskmåskungen den här omgången - annars blir
@@ -3394,6 +3842,10 @@
         // rent hinder mot en redan svårträffad boss. Övriga lägen eskalerar
         // som vanligt, opåverkat.
         if(this.gameMode === 'seagullhunt' && !this.hasDefeatedKingThisRun) return 'psychedelic';
+        if(this.gameMode === 'seagullhunt'){
+          return (this.hasDefeatedPhoenixThisRun && this.hasHitTigerAmbush) ? 'tiger' : 'hell';
+        }
+        if(this.round >= TIGER_STAGE_FROM_ROUND && this.hasHitTigerAmbush) return 'tiger';
         return 'hell';
       }
       if(this.round >= PSYCHEDELIC_FROM_ROUND) return 'psychedelic';
@@ -3403,11 +3855,57 @@
     }
     // LeTigerMystique tar över fiskmåsens plats (se updateSeagull()/
     // drawSceneTopDown()) så fort man är inne i det psykedeliska
-    // stämningsläget - men bara i klassiskt/tidsgräns-läge, inte i
-    // fiskmås-jakten/-undvikandet eller online (currentStage är redan alltid
-    // 'normal' online, se getVisualStage() ovan).
+    // stämningsläget i klassiskt/tidsgräns-läge (och man inte redan hittat
+    // henne där, se hasHitTiger nedan), ELLER under det särskilda bakhållet
+    // i tidsutmaningen på runda 6 (se tigerAmbushActive() nedan), ELLER om
+    // det vimlar av helt vanliga tigrar i tiger-stämningsläget (se
+    // isPlainTigerStage() nedan) - aldrig i fiskmås-undvikandet eller online
+    // (currentStage är redan alltid 'normal' online, se getVisualStage()
+    // ovan).
     isTigerStage(){
-      return this.currentStage === 'psychedelic' && (this.gameMode === 'classic' || this.gameMode === 'timeattack');
+      return (this.currentStage === 'psychedelic' && !this.hasHitTiger && (this.gameMode === 'classic' || this.gameMode === 'timeattack')) || this.tigerAmbushActive() || this.isPlainTigerStage();
+    }
+    // Från och med tiger-stämningsläget (se getVisualStage(),
+    // TIGER_STAGE_FROM_ROUND i klassiskt/tidsgräns-läge, eller direkt efter
+    // fenixen i jaktläget) vimlar det av HELT VANLIGA tigrar utan basker
+    // eller mustasch (se drawPlainTiger()) istället för fiskmåsar, i alla
+    // tre lägena. Till skillnad från henne är dessa bara vanliga djur som
+    // råkar vara i vägen, ingen hemlighet att låsa upp - och till skillnad
+    // från bosstriden (se startSeagullBoss()) helt otraffbara på något
+    // meningsfullt sätt, bara atmosfär.
+    isPlainTigerStage(){
+      return this.currentStage === 'tiger' && (this.gameMode === 'classic' || this.gameMode === 'timeattack' || this.gameMode === 'seagullhunt');
+    }
+    // Sedan spelaren träffat henne på natten i jaktläget en gång (se
+    // markTigerNightHit(), anropas från triggerTigerHit()) gömmer hon sig
+    // härnäst i tidsutmaningen, specifikt på runda 6 - långt innan det
+    // psykedeliska stämningsläget annars skulle inleda henne (se
+    // PSYCHEDELIC_FROM_ROUND). Ett rent bakhåll: spelaren vet inte var hon
+    // dyker upp näst (se notistexten i markTigerHit()/markTigerNightHit()).
+    // !hasHitTigerAmbush: sedan hon VÄL hittats här en gång flyttar hon sig
+    // vidare för gott (upp som bossnivå efter fenixen, se
+    // markTigerAmbushHit()) - man ska inte kunna hitta henne på samma
+    // ställe igen. Ingår i isTigerStage() ovan, så hon ERSÄTTER fiskmåsen
+    // den rundan, precis som i det vanliga psykedeliska fallet.
+    tigerAmbushActive(){
+      return this.hasHitTigerAtNight && !this.hasHitTigerAmbush && this.gameMode === 'timeattack' && this.round === 6;
+    }
+    // Sedan spelaren träffat LeTigerMystique en gång (se markTigerHit(),
+    // anropas från triggerTigerHit()) dyker hon även upp i jaktläget - men
+    // bara på natten, och till skillnad från isTigerStage() ERSÄTTER hon
+    // inte fiskmåsarna här: hon går bara till fots över planen SAMTIDIGT som
+    // de flyger som vanligt, se updateSeagull()/checkSeagullThrowCollision().
+    // !hasHitTigerAtNight: sedan hon VÄL hittats här en gång flyttar hon sig
+    // vidare (till bakhållet i tidsutmaningen, se tigerAmbushActive()) - hon
+    // ska inte gå att hitta på samma ställe igen.
+    huntTigerActive(){
+      return this.hasHitTiger && !this.hasHitTigerAtNight && this.gameMode === 'seagullhunt' && this.currentStage === 'night';
+    }
+    // Anropas av updateSeagull() - avgör om tigern överhuvudtaget ska kunna
+    // gå över planen just nu, oavsett om hon ersätter fiskmåsen
+    // (isTigerStage()) eller går bredvid den (huntTigerActive()).
+    tigerWalkActive(){
+      return this.isTigerStage() || this.huntTigerActive();
     }
     // Räknar fram den här framens palett för stämningsläget och muterar PAL
     // på plats (se kommentaren vid PAL_DEFAULT). t = en stigande klocka i
@@ -3432,6 +3930,35 @@
           light: `hsl(${28+flick},100%,50%)`,
           lightest: `hsl(${42+flick},100%,66%)`
         };
+      } else if(stage === 'rainbow'){
+        // Regnbågsbakgrund - platshållare sedan LE TIGER MYSTIQUE besegrats
+        // som boss (se getVisualStage()/tigerDefeatRound), ingen boss här
+        // ännu. Återanvänder samma randiga fältritning som tiger-läget
+        // (drawField() målar PAL.lightest + 4px-band i PAL.light var 8:e
+        // pixel) men låter kulören svepa genom hela spektrumet istället för
+        // att stå still på orange/svart.
+        const hue = (t*55) % 360;
+        p = {
+          darkest: `hsl(${(hue+200)%360},70%,22%)`,
+          dark: `hsl(${(hue+260)%360},70%,38%)`,
+          light: `hsl(${(hue+40)%360},90%,62%)`,
+          lightest: `hsl(${hue},90%,78%)`
+        };
+      } else if(stage === 'tiger'){
+        // Svart/orange randig bakgrund i samma orange som LE TIGER MYSTIQUE
+        // (#f0a838, se drawTiger()) - drawField() målar redan hela ytan i
+        // PAL.lightest och lägger 4px-band i PAL.light var 8:e pixel, så de
+        // två färgerna här räcker för att ge en randig tigerbakgrund utan
+        // någon extra ritkod. Ett svagt pulserande ljus (samma idé som
+        // helvetets flick) håller den levande utan att byta kulör som det
+        // psykedeliska läget gör.
+        const pulse = 8 + Math.sin(t*3)*6;
+        p = {
+          darkest: '#000000',
+          dark: `hsl(24,${60+pulse}%,${14+pulse*0.3}%)`,
+          light: '#0d0603',
+          lightest: '#f0a838'
+        };
       } else {
         p = PAL_DEFAULT;
       }
@@ -3444,6 +3971,10 @@
       if(stage === 'tipsy') return Math.sin(t*1.3) * 0.05;
       if(stage === 'psychedelic') return Math.sin(t*1.8) * 0.075;
       if(stage === 'hell') return Math.sin(t*2.2) * 0.095;
+      // Tiger-läget svajar INTE som helvetet gjorde - skärmen står still här,
+      // ett medvetet lugn (fast fortfarande med eldpartiklar/spökkubbar kvar,
+      // se drawScene()) innan de vanliga tigrarna dyker upp (se
+      // isPlainTigerStage()).
       return 0;
     }
     // Ett gäng stjärnor på fasta (pseudo-slumpade) positioner som blinkar
@@ -3547,6 +4078,21 @@
           } else {
             this.drawPhoenixBoss(this.boss.x, this.boss.y, this.boss.dir, this.boss.hitFlash > 0, this.boss.isHealing, this.boss.healAnimT);
           }
+        } else if(this.boss.kind === 'tiger'){
+          // Gömd (se updateTigerBoss()) = osynlig och otraffbar - just det
+          // är hela poängen med henne som sista bossnivå, man vet aldrig var
+          // hon är. Annars återanvänds precis samma smygande sprajt som den
+          // vanliga LeTigerMystique, bara med flash-blänk vid träff.
+          if(!this.boss.hidden) this.drawTiger(this.boss.x, this.boss.y, this.boss.dir, this.boss.walkT, this.boss.hitFlash > 0);
+          // Villo-tigrarna (se BOSS_TIGER_DECOY_Y_OFFSETS/updateTigerBoss())
+          // ritas alltid, oavsett om hon själv råkar vara gömd just nu -
+          // annars vore det för lätt att avslöja henne på att en av de fyra
+          // tigrarna plötsligt saknas.
+          if(this.boss.decoys){
+            this.boss.decoys.forEach(d=>{
+              this.drawPlainTiger(d.x, TIGER_Y + d.yOffset, d.dir, d.walkT);
+            });
+          }
         } else if(this.boss.facePlayer){
           this.drawSeagullBossFront(this.boss.x, this.boss.y, this.boss.flapPhase, this.boss.hitFlash > 0, this.boss.kind === 'crown');
         } else {
@@ -3554,10 +4100,20 @@
         }
       } else if(this.isTigerStage()){
         const tigerPosVal = this.tigerPos();
-        if(tigerPosVal) this.drawTiger(tigerPosVal.x, tigerPosVal.y, tigerPosVal.dir, tigerPosVal.walkT);
+        if(tigerPosVal){
+          if(this.isPlainTigerStage()) this.drawPlainTiger(tigerPosVal.x, tigerPosVal.y, tigerPosVal.dir, tigerPosVal.walkT);
+          else this.drawTiger(tigerPosVal.x, tigerPosVal.y, tigerPosVal.dir, tigerPosVal.walkT);
+        }
       } else {
         const gullPos = this.matchType === 'online' ? this.onlineSeagullPos() : this.seagullPos();
         if(gullPos) this.drawSeagull(gullPos.x, gullPos.y, false, gullPos.dir);
+        // Jaktläget på natten (om upplåst, se huntTigerActive()): tigern går
+        // över SAMTIDIGT som fiskmåsen ovan - hon ersätter den inte här, till
+        // skillnad från isTigerStage()-grenen ovan.
+        if(this.huntTigerActive()){
+          const tigerPosVal = this.tigerPos();
+          if(tigerPosVal) this.drawTiger(tigerPosVal.x, tigerPosVal.y, tigerPosVal.dir, tigerPosVal.walkT);
+        }
       }
       this.drawThrower();
     }
@@ -3589,7 +4145,11 @@
       this.rect(W-26, H-32, 22, 36, PAL.darkest);
       this.rect(W-23, H-30, 16, 32, PAL.dark);
     }
+    // Frontalt bystläge (drawSceneFrontal, kungfasens siktvy) - this.trophyTigerOn
+    // byter ut den mot LE TIGER MYSTIQUE på samma sätt som drawKing/
+    // drawKingAsTiger gör i toppvyn, se drawKingFrontTiger nedan.
     drawKingFront(x,y){
+      if(this.trophyTigerOn){ this.drawKingFrontTiger(x,y); return; }
       this.rect(x-8, y-30, 16, 30, PAL.darkest);
       this.rect(x-7, y-29, 14, 28, PAL.dark);
       this.rect(x-3, y-16, 6, 2, PAL.darkest);
@@ -3602,6 +4162,12 @@
         this.rect(x+3, y-23, 2, 2, PAL.lightest);
         this.rect(x-3, y-17, 6, 2, PAL.lightest);
       }
+    }
+    // Ingen egen frontal byst längre - återanvänder samma drawTiger-sprajt
+    // som sidoprofilen (drawKingAsTiger) och alla hennes andra framträdanden,
+    // så det verkligen är samma tigerfigur som möter spelaren här också.
+    drawKingFrontTiger(x,y){
+      this.drawTiger(x, y, 1, 0);
     }
     drawAim(){
       this.drawScene();
@@ -3997,7 +4563,12 @@
     // gamla varianten och tydligt randig som en tiger, med basker och
     // mustasch (se referensbilden "Le Tiger Mystique") istället för bara en
     // ninja-liknande bandana.
-    drawTiger(x, y, dir, walkT){
+    // flash=true (från boss-träffar, se updateTigerBoss()/triggerBossHit())
+    // blänker pälsen vit ett ögonblick, samma idé som PAL-blänket i drawKing/
+    // drawSeagullBoss. this.trophyTigerOn (se drawAchievements()) syns INTE
+    // här - den trofén ger istället Kungen i vanlig klosskastning ett litet
+    // Le Tiger Mystique-utseende, se drawKing().
+    drawTiger(x, y, dir, walkT, flash){
       const ctx = this.ctx;
       ctx.save();
       ctx.translate(Math.round(x), Math.round(y));
@@ -4009,7 +4580,7 @@
       ctx.translate(0, -bob);
       // lätt böjd i knäna och framåtlutad - en typisk smygande "tjuv"-hållning
       ctx.rotate(-0.045);
-      const orange='#f0a838', dgreen='#173d20', cream='#f5f1e6', blue='#3f6ea3', belt='#a9691f';
+      const orange = flash ? '#ffffff' : '#f0a838', dgreen='#173d20', cream='#f5f1e6', blue='#3f6ea3', belt='#a9691f';
       const dark='#2b1608';   // tigerränder + mustasch
       // svans, svänger bakom kroppen i takt med de långsamma stegen
       ctx.save();
@@ -4064,6 +4635,66 @@
       this.rect(5,-10,3,1, dark);
       this.rect(7,-11,2,1, dark);
       // mun
+      this.rect(-2,-8,4,1, dgreen);
+      ctx.restore();
+    }
+    // ---- En HELT VANLIG tiger (isPlainTigerStage(), se getVisualStage()) -
+    // samma kropp/ben/svans/steggång som LE TIGER MYSTIQUE (drawTiger ovan),
+    // men utan hennes basker och mustasch: vanliga öron istället för basker
+    // (hon har inga synliga öron alls, se kommentaren i drawTiger), och en
+    // vanlig nos utan uppsvängda flikar. Bandana/halsduk/bälte behålls - det
+    // är bara de två mest "mänskliga" dragen som saknas, resten är bara en
+    // tiger.
+    drawPlainTiger(x, y, dir, walkT, flash){
+      const ctx = this.ctx;
+      ctx.save();
+      ctx.translate(Math.round(x), Math.round(y));
+      if(dir === -1) ctx.scale(-1,1);
+      const stepPhase = Math.sin(walkT*2.2);
+      const bob = Math.abs(Math.cos(walkT*2.2)) * 0.9;
+      ctx.translate(0, -bob);
+      ctx.rotate(-0.045);
+      const orange = flash ? '#ffffff' : '#f0a838', dgreen='#173d20', cream='#f5f1e6', blue='#3f6ea3', belt='#a9691f';
+      const dark='#2b1608';
+      ctx.save();
+      ctx.translate(-8,-5);
+      ctx.rotate(stepPhase*0.3 - 0.45);
+      this.rect(-1,-1,3,12, orange);
+      this.rect(-1,2,3,2, dark);
+      this.rect(-1,7,3,2, dark);
+      this.rect(-1,10,3,2, dgreen);
+      ctx.restore();
+      const backLegLen = 7 - Math.max(0,-stepPhase)*1.5;
+      this.rect(-4, 6+(7-backLegLen), 4, backLegLen, dgreen);
+      this.rect(-4, 6+(7-backLegLen), 4, 2, dark);
+      this.rect(-8,-13,16,19, orange);
+      this.rect(-8,-11,4,2, dark);
+      this.rect(1,-12,3,2, dark);
+      this.rect(5,-8,3,2, dark);
+      this.rect(-8,-5,3,2, dark);
+      this.rect(3,-5,4,2, dark);
+      this.rect(-8,-2,16,2, dgreen);
+      const frontLegLen = 7 - Math.max(0,stepPhase)*1.5;
+      this.rect(2, 6+(7-frontLegLen), 4, frontLegLen, dgreen);
+      this.rect(2, 6+(7-frontLegLen), 4, 2, dark);
+      this.rect(-8,4,16,3, belt);
+      this.rect(-6,-13,12,3, blue);
+      this.rect(-6,-11,12,1, cream);
+      this.rect(-6,-22,15,10, orange);
+      this.rect(-6,-20,2,3, dark);
+      this.rect(6,-18,3,2, dark);
+      // vanliga, spetsiga öron istället för basker
+      this.rect(-5,-26,4,5, orange);
+      this.rect(6,-26,4,5, orange);
+      this.rect(-4,-25,2,2, dgreen);
+      this.rect(7,-25,2,2, dgreen);
+      // bandana/mask över ögonen
+      this.rect(-7,-19,17,4, dgreen);
+      this.rect(-4,-19,3,3, cream);
+      this.rect(3,-19,3,3, cream);
+      // nosparti - ingen mustasch
+      this.rect(-3,-14,8,6, cream);
+      this.rect(0,-13,2,2, dgreen);
       this.rect(-2,-8,4,1, dgreen);
       ctx.restore();
     }
@@ -4208,6 +4839,31 @@
       this.rect(1,-3,2,2, '#ffe27a');
       // liten flamtofs
       this.drawPhoenixCrest(0, -7, 4);
+    }
+    // Fjärde och sista troféikonen, för LE TIGER MYSTIQUE som boss - eget
+    // litet miniatyrhuvud i samma orange/gröna palett som drawTiger (basker,
+    // bandana, mustasch). Ritas som en egen, oberoende ikon bredvid de tre
+    // ovan i drawAchievements(), av samma anledning som drawPhoenixTrophyFace
+    // - hennes form/palett skiljer sig för mycket från de vita måsarnas för
+    // att dela bas-rects med drawBossTrophyFace.
+    drawTigerTrophyFace(){
+      const orange='#f0a838', dgreen='#173d20', cream='#f5f1e6', dark='#2b1608';
+      // huvud
+      this.rect(-8,-7,16,14, orange);
+      this.rect(-8,3,16,4, dgreen);
+      // basker
+      this.rect(-9,-11,18,4, dgreen);
+      this.rect(-2,-13,4,3, dgreen);
+      // bandana över ögonen
+      this.rect(-8,-4,16,4, dgreen);
+      this.rect(-5,-4,3,3, cream);
+      this.rect(2,-4,3,3, cream);
+      // nosparti
+      this.rect(-3,1,6,4, cream);
+      this.rect(-1,3,2,2, dgreen);
+      // mustasch
+      this.rect(-7,4,3,1, dark);
+      this.rect(4,4,3,1, dark);
     }
     // Bossen rakt framifrån, med båda vingarna flaxande häftigt upp och ner
     // - används medan b.facePlayer är true (se updateBoss()). wingPhase är
@@ -4461,9 +5117,11 @@
       if(a){
         const ctx = this.ctx;
         const p = Math.min(1, a.t/a.dur);
-        const fallY = a.y + p*34; // måsen daskar snurrigt nedåt
+        const isTigerBoss = a.boss && a.bossKind === 'tiger';
+        const fallY = a.y + p*(isTigerBoss ? 20 : 34); // måsen daskar snurrigt nedåt - tigern vinglar till och sjunker ihop (samma idé som drawTigerHitScene())
         if(a.boss){
           if(a.bossKind === 'phoenix') this.drawPhoenixBoss(a.x, fallY, a.dir, false, false, 0);
+          else if(a.bossKind === 'tiger') this.drawTiger(a.x, fallY, a.dir, a.t*1.5);
           else this.drawSeagullBoss(a.x, fallY, a.dir, false, a.bossKind === 'crown');
         }
         else this.drawSeagull(a.x, fallY, true, a.dir);
@@ -4481,12 +5139,43 @@
           ctx.restore();
         }
         ctx.restore();
-        // lösa fjädrar som singlar ner
-        const featherCount = a.boss ? 5 : 3;
-        for(let i=0;i<featherCount;i++){
-          const drip = (a.t*36 + i*15) % 30;
-          this.rect(a.x-6+i*6, a.y+drip, 2,3, i%2===0 ? PAL.darkest : PAL.dark);
+        // lösa fjädrar som singlar ner - LE TIGER MYSTIQUE har päls, inte
+        // fjädrar (samma resonemang som i drawTigerHitScene()), så hon får
+        // inga.
+        if(!isTigerBoss){
+          const featherCount = a.boss ? 5 : 3;
+          for(let i=0;i<featherCount;i++){
+            const drip = (a.t*36 + i*15) % 30;
+            this.rect(a.x-6+i*6, a.y+drip, 2,3, i%2===0 ? PAL.darkest : PAL.dark);
+          }
         }
+      }
+      this.drawHUD();
+      this.drawMessage();
+    }
+    // Samma idé som drawSeagullHitScene() - yrande stjärnor kring en
+    // studsande, omtöcknad LeTigerMystique istället för fjädrar (hon har ju
+    // päls, inte fjädrar).
+    drawTigerHitScene(){
+      this.drawScene();
+      const a = this.tigerHitAnim;
+      if(a){
+        const ctx = this.ctx;
+        const p = Math.min(1, a.t/a.dur);
+        const fallY = a.y + p*20; // tigern vinglar till och sjunker lite ihop
+        if(this.isPlainTigerStage()) this.drawPlainTiger(a.x, fallY, a.dir, a.t*1.5);
+        else this.drawTiger(a.x, fallY, a.dir, a.t*1.5);
+        ctx.save();
+        ctx.translate(a.x, fallY-20);
+        for(let i=0;i<4;i++){
+          const ang = a.t*6 + i*(Math.PI*2/4);
+          ctx.save();
+          ctx.translate(Math.cos(ang)*10, Math.sin(ang)*10*0.5);
+          ctx.fillStyle = PAL.darkest;
+          this.drawStar(0,0,3,1.5,5);
+          ctx.restore();
+        }
+        ctx.restore();
       }
       this.drawHUD();
       this.drawMessage();
@@ -4696,7 +5385,8 @@
       const trophies = [
         { id:'trophyAngry',   boxKey:'_decoTrophyAngryBox',   unlocked:this.hasDefeatedBossEver,        on:this.trophyAngryOn,   label:'FISKMÅSBOSSEN',  draw:()=>this.drawBossTrophyFace(false) },
         { id:'trophyKing',    boxKey:'_decoTrophyKingBox',    unlocked:this.hasDefeatedBossKingEver,    on:this.trophyKingOn,    label:'FISKMÅSKUNGEN',  draw:()=>this.drawBossTrophyFace(true) },
-        { id:'trophyPhoenix', boxKey:'_decoTrophyPhoenixBox', unlocked:this.hasDefeatedBossPhoenixEver, on:this.trophyPhoenixOn, label:'FENIXEN',        draw:()=>this.drawPhoenixTrophyFace() }
+        { id:'trophyPhoenix', boxKey:'_decoTrophyPhoenixBox', unlocked:this.hasDefeatedBossPhoenixEver, on:this.trophyPhoenixOn, label:'FENIXEN',        draw:()=>this.drawPhoenixTrophyFace() },
+        { id:'trophyTiger',   boxKey:'_decoTrophyTigerBox',   unlocked:this.hasDefeatedBossTigerEver,   on:this.trophyTigerOn,   label:'TIGERN',         draw:()=>this.drawTigerTrophyFace() }
       ];
       const unlockedCount = trophies.filter(tr=>tr.unlocked).length;
 
@@ -5078,7 +5768,7 @@
       // overlay-passet i slutet, läser alla samma värde.
       this.currentStage = this.getVisualStage();
       this.applyStagePalette(this.currentStage, this.msgClock);
-      if(this.currentStage === 'hell') this.updateHellParticles(dt);
+      if(this.currentStage === 'hell' || this.currentStage === 'tiger') this.updateHellParticles(dt);
       // Letterbox-fälten i helskärmsläge (den svarta ytan runt canvasen när
       // skärmens bildförhållande inte exakt matchar spelets 160:144) ska
       // matcha spelets aktuella LCD-bakgrund istället för en fast färg -
@@ -5146,10 +5836,17 @@
           // Kastet träffade fiskmåsen just denna frame - rita träff-scenen
           // direkt istället för det vanliga kastet.
           this.drawSeagullHitScene();
+        } else if(this.state === 'tigerhit'){
+          // Kastet träffade LeTigerMystique just denna frame - se
+          // checkTigerThrowCollision()/triggerTigerHit().
+          this.drawTigerHitScene();
         }
       } else if(this.state === 'seagullhit'){
         this.updateSeagullHit(dt);
         if(this.state === 'seagullhit') this.drawSeagullHitScene(); // rita om inte animationen redan avslutats denna frame
+      } else if(this.state === 'tigerhit'){
+        this.updateTigerHit(dt);
+        if(this.state === 'tigerhit') this.drawTigerHitScene(); // rita om inte animationen redan avslutats denna frame
       } else if(this.state === 'overpower'){
         this.updateOverpower(dt);
         if(this.state === 'overpower') this.drawOverpower(); // rita om inte sekvensen redan avslutats denna frame
@@ -5201,6 +5898,10 @@
       } else if(this.currentStage === 'hell'){
         this.drawGhostKubbs(this.msgClock);
         this.drawHellParticles();
+      } else if(this.currentStage === 'tiger'){
+        // Elden (drawHellParticles) borttagen ur tiger-bakgrunden på
+        // begäran - bara de atmosfäriska kubbspökena är kvar.
+        this.drawGhostKubbs(this.msgClock);
       }
 
       // Upplåsningsnotis (se drawUnlockNotice()) ritas allra sist, ovanpå
