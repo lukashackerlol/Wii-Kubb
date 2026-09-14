@@ -454,20 +454,20 @@
   // riktiga kast/runda börjar.
   const NAME_CHARSET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ';
   const NAME_LEN = 6;          // antal tecken i namnet på highscore-listan
-  const HIGHSCORE_KEY = 'wiiKubbHighscores';
+  const HIGHSCORE_KEY = 'wiiKubbHighscoresReset1';
   const MAX_HIGHSCORES = 10;   // topp-10, både lokalt (offline-cache) och i det globala molnet
-  const SEAGULL_HIT_KEY = 'wiiKubbSeagullHit'; // sparar om spelaren någonsin träffat en fiskmås (låser upp jaktläges-genvägen)
-  const SEAGULL_TOTAL_HITS_KEY = 'wiiKubbSeagullTotalHits'; // livstids-räknare över antal träffade fiskmåsar i jaktläget - återställs ALDRIG (varken mellan rundor eller nya spelomgångar)
-  const HUNT_BEST_KEY = 'wiiKubbSeagullHuntBest'; // rekordmätare: högsta poäng (this.round) någonsin nådd i EN ENDA jaktomgång - till skillnad från SEAGULL_TOTAL_HITS_KEY ovan, som räknar ihop alla omgångar
-  const TIGER_HIT_KEY = 'wiiKubbTigerHit'; // sparar om spelaren någonsin träffat LeTigerMystique - låser upp att hon även dyker upp i jaktläget på natten, se huntTigerActive()
-  const TIGER_NIGHT_HIT_KEY = 'wiiKubbTigerNightHit'; // sparar om spelaren träffat henne på natten i jaktläget - låser upp ännu ett gömställe, se tigerAmbushActive()
-  const TIGER_AMBUSH_HIT_KEY = 'wiiKubbTigerAmbushHit'; // sparar om spelaren träffat henne i bakhållet (tidsutmaningen, runda 6) - låser upp att hon dyker upp som boss efter fenixen, se startSeagullBoss()
+  const SEAGULL_HIT_KEY = 'wiiKubbSeagullHitReset1'; // sparar om spelaren någonsin träffat en fiskmås (låser upp jaktläges-genvägen)
+  const SEAGULL_TOTAL_HITS_KEY = 'wiiKubbSeagullTotalHitsReset1'; // livstids-räknare över antal träffade fiskmåsar i jaktläget - återställs ALDRIG (varken mellan rundor eller nya spelomgångar)
+  const HUNT_BEST_KEY = 'wiiKubbSeagullHuntBestReset1'; // rekordmätare: högsta poäng (this.round) någonsin nådd i EN ENDA jaktomgång - till skillnad från SEAGULL_TOTAL_HITS_KEY ovan, som räknar ihop alla omgångar
+  const TIGER_HIT_KEY = 'wiiKubbTigerHitReset1'; // sparar om spelaren någonsin träffat LeTigerMystique - låser upp att hon även dyker upp i jaktläget på natten, se huntTigerActive()
+  const TIGER_NIGHT_HIT_KEY = 'wiiKubbTigerNightHitReset1'; // sparar om spelaren träffat henne på natten i jaktläget - låser upp ännu ett gömställe, se tigerAmbushActive()
+  const TIGER_AMBUSH_HIT_KEY = 'wiiKubbTigerAmbushHitReset1'; // sparar om spelaren träffat henne i bakhållet (tidsutmaningen, runda 6) - låser upp att hon dyker upp som boss efter fenixen, se startSeagullBoss()
   const HAPPY_KING_HITS = 20; // när totalSeagullHits når denna gräns får Kungen ett litet glatt ansikte i de vanliga spellägena
   const SEAGULL_MENU_UNLOCK_HITS = 100; // när totalSeagullHits når denna gräns visas en liten meny (FISKMÅSJAKT/FISKMÅS) istället för att klick på fiskmås-ikonen hoppar rakt in i jaktläget
   // ---- livstidsstatistik som visas på achievements-fliken (se drawAchievements()) ----
-  const ROUNDS_CLEARED_KEY = 'wiiKubbRoundsClearedTotal'; // antal rundor (kungen fälld) klarade totalt i lokalt klassiskt/tid-utmaningsläge
-  const ONLINE_WINS_KEY = 'wiiKubbOnlineWins';     // antal online-matcher (bäst av 3) vunna totalt
-  const ONLINE_LOSSES_KEY = 'wiiKubbOnlineLosses'; // antal online-matcher (bäst av 3) förlorade totalt
+  const ROUNDS_CLEARED_KEY = 'wiiKubbRoundsClearedTotalReset1'; // antal rundor (kungen fälld) klarade totalt i lokalt klassiskt/tid-utmaningsläge
+  const ONLINE_WINS_KEY = 'wiiKubbOnlineWinsReset1';     // antal online-matcher (bäst av 3) vunna totalt
+  const ONLINE_LOSSES_KEY = 'wiiKubbOnlineLossesReset1'; // antal online-matcher (bäst av 3) förlorade totalt
 
   // ---- fiskmås-DUCKNINGSLÄGET (rollerna ombytta - dolt bonusläge nummer
   // två, låses upp via FISKMÅS-alternativet i den lilla menyn som dyker upp
@@ -487,7 +487,7 @@
   const DODGE_SECOND_THROWER_AT = 30; // vid denna poäng dyker en till kastare upp och kastar SAMTIDIGT som den första - betydligt svårare, se registerDodgeSuccess()/updateSeagullDodge()
   const DODGE_THROWER2_X = 24;        // den andra kastarens x-position, tydligt förskjuten från den första (KING_X, mitten) så de två inflygande kasten går att skilja åt
   const DODGE_HITREACT_DUR = 0.9;  // hur länge yrvaken-reaktionen visas innan game over-skärmen
-  const DODGE_BEST_KEY = 'wiiKubbSeagullDodgeBest'; // livstids-rekord (flest undvikna kast i en följd), sparas lokalt precis som övriga livstidsräknare
+  const DODGE_BEST_KEY = 'wiiKubbSeagullDodgeBestReset1'; // livstids-rekord (flest undvikna kast i en följd), sparas lokalt precis som övriga livstidsräknare
 
   // ---- fiskmås-DUCKNINGSLÄGETS pommes-rusning (funkar som en boss: var
   // DODGE_POMMES_AT:e lyckade undvikning, se BOSS_TRIGGER_HITS i jaktläget
@@ -508,7 +508,37 @@
   const POMMES_DIVE_DUR = 0.35;     // hur länge själva dykrörelsen (ner mot marken och tillbaka) tar - siktet fryser under tiden, se updatePommesHeist()
   const POMMES_INTRO_DUR = 1;       // kort "POMMESRUSNING!"-banderoll innan klockan börjar rinna
   const POMMES_RESULT_DUR = 1.8;    // hur länge lyckad-/misslyckad-skärmen visas innan man återgår till vanlig duckning
-  const POMMES_STOLEN_KEY = 'wiiKubbPommesStolenTotal'; // livstids-räknare över hur många pommesrusningar som lyckats, sparas lokalt precis som DODGE_BEST_KEY ovan
+  const POMMES_STOLEN_KEY = 'wiiKubbPommesStolenTotalReset1'; // livstids-räknare över hur många pommesrusningar som lyckats, sparas lokalt precis som DODGE_BEST_KEY ovan
+  // Kosmetisk upplåsning: efter POMMES_CARRY_UNLOCK_AT lyckade
+  // pommesrusningar (se pommesStolenTotal ovan) bär den VANLIGA
+  // måltavle-fiskmåsen (this.seagull, se updateSeagull()/drawSeagull())
+  // ibland in en liten pommes i näbben - avgörs slumpmässigt (POMMES_CARRY_
+  // CHANCE) varje gång en ny fågel spawnas. Rent kosmetiskt, ändrar inget
+  // om träffen.
+  const POMMES_CARRY_UNLOCK_AT = 10;
+  const POMMES_CARRY_CHANCE = 0.25; // 1 på 4
+
+  // ---- LE TIGER MYSTIQUE:s besök i pommesrusningen i fiskmåsläget -
+  // kedjans nya första länk (se huntTigerActive() nedan för resten av
+  // kedjan). Så länge spelaren inte hittat henne här (se
+  // hasHitTigerAtPommes/markTigerPommesHit()) kommer hon på besök SAMTIDIGT
+  // som den vanliga pommesrusningen pågår - hon ersätter den INTE (fiskmåsen
+  // dyker fortfarande efter pommesen som vanligt, se attemptPommesDive()).
+  // Hon kommer gående in från höger, sätter sig en liten stund på andra
+  // sidan pommesen (sett från människan), och går sedan ut samma väg hon
+  // kom - se updateTigerPommesVisit()/drawPommesHeist(). ----
+  const TIGER_POMMES_SIT_X = KING_X + POMMES_OFFSET_X*2; // "andra sidan pommesen": människa -> pommes -> henne, samma avstånd två gånger
+  const TIGER_POMMES_ENTER_X = W + 12;    // startpunkt utanför högerkanten - hon går tillbaka hit (samma väg) när hon lämnar
+  const TIGER_POMMES_WALK_SPEED = 26;     // lugnare än en flykt - hon smyger snarare än rusar
+  const TIGER_POMMES_SIT_DUR = 3.4;       // hur länge hon sitter still innan hon reser sig och går tillbaka
+  const TIGER_POMMES_HIT_TOL = 9;         // hur nära hennes x-position dyket måste landa för att räknas som en träff
+  // Brett sikte för just detta möte - täcker nästan hela nedre fältet, till
+  // skillnad från POMMES_AIM_RANGE ovan som bara pendlar en kort bit runt
+  // pommesen. Annars skulle man aldrig kunna nå henne där hon sitter, en bit
+  // bortom pommesen.
+  const TIGER_POMMES_AIM_MIN = 10;
+  const TIGER_POMMES_AIM_MAX = W - 10;
+  const TIGER_POMMES_HIT_KEY = 'wiiKubbTigerPommesHitReset1'; // sparar om spelaren hittat henne här - se markTigerPommesHit()
 
   // ---- fiskmås-jaktläget (dolt bonusläge, låses upp via highscore-fliken) ----
   const HUNT_GAP_MIN = 0.3, HUNT_GAP_MAX = 0.9; // paus mellan överflygningar - mycket kortare än i vanliga läget
@@ -536,9 +566,9 @@
   const BOSS_CROWN_FACE_GAP_MIN = 2.6, BOSS_CROWN_FACE_GAP_MAX = 4.6; // står still och glor mer sällan
   const BOSS_CROWN_FACE_DUR_MIN = 0.4, BOSS_CROWN_FACE_DUR_MAX = 0.7; // ...och bara en kort stund när hon väl gör det
   const BOSS_CROWN_VISUAL_SCALE = 0.78; // fiskmåskungen ritas mindre än den vanliga bossen
-  const BOSS_DEFEAT_KEY = 'wiiKubbBossDefeatedEver'; // sparar om spelaren någonsin besegrat den vanliga bossen (visar troféansiktet på highscore-fliken)
-  const BOSS_KING_DEFEAT_KEY = 'wiiKubbBossKingDefeatedEver'; // sparar om spelaren någonsin besegrat fiskmåskungen (uppgraderar trofén till den krönta varianten)
-  const BOSS_PHOENIX_DEFEAT_KEY = 'wiiKubbBossPhoenixDefeatedEver'; // sparar om spelaren någonsin besegrat fenixen (låser upp eld-trofén, se drawSeagull()/drawHighscoreList())
+  const BOSS_DEFEAT_KEY = 'wiiKubbBossDefeatedEverReset1'; // sparar om spelaren någonsin besegrat den vanliga bossen (visar troféansiktet på highscore-fliken)
+  const BOSS_KING_DEFEAT_KEY = 'wiiKubbBossKingDefeatedEverReset1'; // sparar om spelaren någonsin besegrat fiskmåskungen (uppgraderar trofén till den krönta varianten)
+  const BOSS_PHOENIX_DEFEAT_KEY = 'wiiKubbBossPhoenixDefeatedEverReset1'; // sparar om spelaren någonsin besegrat fenixen (låser upp eld-trofén, se drawSeagull()/drawHighscoreList())
   // ---- Fenixfågeln (kind==='phoenix', se startSeagullBoss): tredje och
   // sista boss-nivån, dyker upp först sedan fiskmåskungen besegrats denna
   // omgång - vilket i praktiken betyder att hon bara möts i eldläget (se
@@ -556,7 +586,7 @@
   const BOSS_PHOENIX_HEAL_INTERVAL = 15;    // sekunder mellan varje gång hon helar sig ett steg, se updateBoss()
   const BOSS_PHOENIX_HEAL_AMOUNT = 3;       // hur många hp hon helar per gång ("ett steg")
   const BOSS_PHOENIX_HEAL_ANIM_DUR = 1.3;   // hur länge den helande rörelsen (stiger, glöder, gnistrar) visas
-  const BOSS_TIGER_DEFEAT_KEY = 'wiiKubbBossTigerDefeatedEver'; // sparar om spelaren någonsin besegrat LeTigerMystique som boss
+  const BOSS_TIGER_DEFEAT_KEY = 'wiiKubbBossTigerDefeatedEverReset1'; // sparar om spelaren någonsin besegrat LeTigerMystique som boss
   // ---- LeTigerMystique (kind==='tiger', se startSeagullBoss): fjärde och
   // sista boss-nivån, dyker upp efter fenixen - men bara om spelaren låst
   // upp henne genom hela kedjan (klassiskt/tidsgräns -> jaktläget på natten
@@ -726,7 +756,8 @@
       this.lastPlayedThrowTs = 0; // undviker att spela upp motståndarens senaste kast två gånger
       this.lastSeenMessageAt = 0; // undviker att visa samma meddelande om och om igen
       this.hasHitSeagull = this.loadSeagullHitFlag(); // styr om den lilla fiskmåsen visas på highscore-fliken
-      this.hasHitTiger = this.loadTigerHitFlag(); // låser upp att LeTigerMystique även dyker upp i jaktläget på natten, se huntTigerActive()
+      this.hasHitTiger = this.loadTigerHitFlag(); // historisk flagga - låste tidigare upp jaktläges-mötet (se huntTigerActive()), men hennes första gömställe (det psykedeliska stämningsläget i klassiskt/tidsgräns-läge) är borttaget på begäran, så den styr inget längre. Kvar bara för bakåtkompatibilitet med gamla sparningar.
+      this.hasHitTigerAtPommes = this.loadTigerPommesHitFlag(); // NYA första länken i kedjan - låser upp jaktläges-mötet på natten (se huntTigerActive()), se markTigerPommesHit()
       this.hasHitTigerAtNight = this.loadTigerNightHitFlag(); // låser upp att hon dyker upp igen i tidsutmaningen på runda 6, se tigerAmbushActive()
       this.hasHitTigerAmbush = this.loadTigerAmbushHitFlag(); // låser upp att hon dyker upp som boss efter fenixen, se startSeagullBoss()
       this.totalSeagullHits = this.loadSeagullTotalHits(); // livstids-räknare, se SEAGULL_TOTAL_HITS_KEY - laddas en gång och räknas sedan bara uppåt
@@ -968,6 +999,34 @@
         }
       });
     }
+    // ---- flagga: har spelaren hittat LE TIGER MYSTIQUE i den allra första
+    // pommesrusningen i fiskmåsläget (se startPommesHeist())? Det här är
+    // NYA första länken i kedjan - låser upp jaktläges-mötet på natten (se
+    // huntTigerActive()). Till skillnad från de andra länkarna finns ingen
+    // "rundans slut" att vänta in i fiskmåsläget (man kan hålla på hur länge
+    // som helst), så notisen visas direkt istället för att köas, se
+    // flushPendingUnlockNotices() nedan.
+    loadTigerPommesHitFlag(){
+      try{ return localStorage.getItem(TIGER_POMMES_HIT_KEY) === '1'; }catch(e){ return false; }
+    }
+    markTigerPommesHit(){
+      if(this.hasHitTigerAtPommes) return; // redan upplåst, inget mer att spara
+      this.hasHitTigerAtPommes = true;
+      try{ localStorage.setItem(TIGER_POMMES_HIT_KEY, '1'); }catch(e){}
+      this.queueUnlockNotice({
+        name: 'LE TIGER MYSTIQUE',
+        desc: 'SPRANG IVÄG OCH GÖMDE SIG',
+        draw: (cx,cy)=>{
+          const ctx = this.ctx;
+          ctx.save();
+          ctx.translate(cx, cy);
+          ctx.scale(0.6, 0.6);
+          this.drawTiger(0, 14, -1, 0);
+          ctx.restore();
+        }
+      });
+      this.flushPendingUnlockNotices();
+    }
     // ---- flagga: har spelaren någonsin träffat LeTigerMystique? ----
     // Låser upp att hon även dyker upp i jaktläget på natten (se
     // huntTigerActive()) - hon går över samtidigt som fiskmåsarna flyger
@@ -1116,6 +1175,25 @@
     incrementPommesStolenTotal(){
       this.pommesStolenTotal++;
       try{ localStorage.setItem(POMMES_STOLEN_KEY, String(this.pommesStolenTotal)); }catch(e){}
+      if(this.pommesStolenTotal === POMMES_CARRY_UNLOCK_AT){
+        this.queueUnlockNotice({
+          name: 'FISKMÅS MED POMMES',
+          desc: 'DU HAR LYCKATS MED '+POMMES_CARRY_UNLOCK_AT+' POMMESRUSNINGAR',
+          draw: (cx,cy)=>{
+            const ctx = this.ctx;
+            ctx.save();
+            ctx.translate(cx, cy);
+            ctx.scale(0.85, 0.85);
+            this.drawSeagull(0, 0, false, -1, true);
+            ctx.restore();
+          }
+        });
+        // Precis som markTigerPommesHit() - fiskmåsläget (seagulldodge) har
+        // inget "rundans slut" att vänta in (se endGame()/
+        // flushPendingUnlockNotices()), så notisen visas direkt istället
+        // för att köas.
+        this.flushPendingUnlockNotices();
+      }
     }
     // Har spelaren träffat tillräckligt många fiskmåsar totalt i jaktläget
     // för att Kungen ska få ett litet glatt ansikte i de vanliga spellägena?
@@ -2260,7 +2338,25 @@
         diveHit: false,  // om det pågående/senaste dyket träffade - styr träff/miss-visualen
         introT: POMMES_INTRO_DUR,
         result: null,    // null medan rusningen pågår, sedan 'success' | 'fail'
-        resultT: 0
+        resultT: 0,
+        // Brett sikte (se TIGER_POMMES_AIM_MIN/MAX) för HELA den här
+        // rusningen om LE TIGER MYSTIQUE är med denna gång, satt en gång
+        // här så det inte hoppar till den smala banan mitt i även om hon
+        // hinner lämna innan rusningen är slut, se updatePommesHeist().
+        wideAim: !this.hasHitTigerAtPommes,
+        // Så länge spelaren inte hittat henne här än (se
+        // markTigerPommesHit()) kommer hon på besök SAMTIDIGT som den
+        // vanliga rusningen pågår - hon stjäl ingenting, sätter sig bara en
+        // stund bredvid (på andra sidan pommesen) och går igen, se
+        // updateTigerPommesVisit()/drawPommesHeist() nedan. Upprepas varje
+        // rusning tills hon hittas.
+        tiger: !this.hasHitTigerAtPommes ? {
+          phase: 'enter',  // 'enter' -> 'sit' -> 'exit'
+          x: TIGER_POMMES_ENTER_X,
+          walkT: 0,
+          sitT: 0,
+          caught: false
+        } : null
       };
       d.phase = 'pommes';
       this.audio.sfxLock();
@@ -2273,6 +2369,26 @@
       const d = this.dodge;
       const p = d && d.pommes;
       if(!p || p.result || p.introT > 0 || p.diveT > 0) return;
+      // Om LE TIGER MYSTIQUE är på besök just nu (se startPommesHeist()) och
+      // dyket landar på HENNES position: det tar över hela det här dyket -
+      // räknas inte samtidigt som ett fiskmås-dyk mot pommesen. Ett enda
+      // sådant träffat dyk räcker, ingen "resultat"-skärm eller poängkrav
+      // för just henne, se markTigerPommesHit(). Missar man fortsätter den
+      // vanliga rusningen (pommesen/fiskmåsen) helt opåverkad - hon sitter
+      // kvar tills hon reser sig och går själv, se updateTigerPommesVisit().
+      const t = p.tiger;
+      if(t && !t.caught && Math.abs(p.aimX - t.x) <= TIGER_POMMES_HIT_TOL){
+        p.diveHit = true;
+        p.diveT = POMMES_DIVE_DUR;
+        this.audio.sfxHit();
+        t.caught = true;
+        this.shake = Math.max(this.shake, 6);
+        this.markTigerPommesHit();
+        // Påkommen - skyndar sig ut samma väg hon kom, se
+        // updateTigerPommesVisit() som redan hanterar 'exit'-fasen.
+        t.phase = 'exit';
+        return;
+      }
       const px = KING_X + POMMES_OFFSET_X;
       const hit = Math.abs(p.aimX - px) <= POMMES_HIT_TOL;
       p.diveHit = hit;
@@ -2306,6 +2422,11 @@
       const d = this.dodge;
       const p = d && d.pommes;
       if(!p) return;
+      // LE TIGER MYSTIQUE:s eventuella besök (se startPommesHeist()) rör
+      // sig oberoende av allt annat nedan - hon går/sitter/går vidare även
+      // om spelaren är upptagen med att dyka mot pommesen, eller under
+      // intro-/resultat-skärmen. Se updateTigerPommesVisit().
+      if(p.tiger) this.updateTigerPommesVisit(dt, p);
       if(p.result){
         p.resultT += dt;
         if(p.resultT >= POMMES_RESULT_DUR){
@@ -2330,7 +2451,37 @@
       p.timeLeft -= dt;
       if(p.timeLeft <= 0){ this.resolvePommesHeist(false); return; }
       p.aimT += dt*POMMES_AIM_SPEED;
-      p.aimX = KING_X + POMMES_OFFSET_X + Math.sin(p.aimT)*POMMES_AIM_RANGE;
+      if(p.wideAim){
+        // Brett sikte hela rusningen igenom om hon var med denna gång (satt
+        // i startPommesHeist()) - täcker både pommesen och henne, hela
+        // nedre fältet, se TIGER_POMMES_AIM_MIN/MAX.
+        const cx = (TIGER_POMMES_AIM_MIN+TIGER_POMMES_AIM_MAX)/2, half = (TIGER_POMMES_AIM_MAX-TIGER_POMMES_AIM_MIN)/2;
+        p.aimX = cx + Math.sin(p.aimT)*half;
+      } else {
+        p.aimX = KING_X + POMMES_OFFSET_X + Math.sin(p.aimT)*POMMES_AIM_RANGE;
+      }
+    }
+    // ---- LE TIGER MYSTIQUE:s eventuella besök under en pommesrusning (se
+    // startPommesHeist()/attemptPommesDive()) - hon går in, sätter sig en
+    // stund på andra sidan pommesen, och går ut igen samma väg, HELT
+    // OBEROENDE av hur rusningen i övrigt går (hon stjäl ingenting och
+    // påverkar inte tidsgränsen/poängkravet). this.dodge.pommes.tiger
+    // sätts till null när hon är helt borta. ----
+    updateTigerPommesVisit(dt, p){
+      const t = p.tiger;
+      if(t.phase === 'enter'){
+        t.walkT += dt;
+        t.x -= TIGER_POMMES_WALK_SPEED*dt;
+        if(t.x <= TIGER_POMMES_SIT_X){ t.x = TIGER_POMMES_SIT_X; t.phase = 'sit'; t.sitT = 0; }
+      } else if(t.phase === 'sit'){
+        // Benen vilar (ingen walkT-ökning) medan hon sitter still.
+        t.sitT += dt;
+        if(t.sitT >= TIGER_POMMES_SIT_DUR) t.phase = 'exit';
+      } else if(t.phase === 'exit'){
+        t.walkT += dt;
+        t.x += TIGER_POMMES_WALK_SPEED*dt;
+        if(t.x >= TIGER_POMMES_ENTER_X) p.tiger = null; // helt borta - besöket är slut
+      }
     }
     // Träffad av valfritt kast (kastare 1 ELLER 2) - rundan är slut.
     triggerDodgeHit(){
@@ -2497,9 +2648,12 @@
         seagullY = POMMES_HOVER_Y + Math.sin(d.wingT*6)*2;
       }
 
-      // Siktet - pendlar fram och tillbaka över pommesen tills man dyker,
-      // samma idé som det vanliga sikta/kasta-lägets aimX/aimT, bara
-      // snabbare och med kortare bana. Fryst (och gömt) under dyk/resultat.
+      // Siktet - pendlar fram och tillbaka tills man dyker, samma idé som
+      // det vanliga sikta/kasta-lägets aimX/aimT, bara snabbare och med
+      // kortare bana. Om LE TIGER MYSTIQUE är på besök den här rusningen
+      // (se startPommesHeist()) är banan bredare (this.dodge.pommes.wideAim,
+      // se updatePommesHeist()) och täcker hela nedre fältet, annars bara
+      // en kort bit runt pommesen. Fryst (och gömt) under dyk/resultat.
       if(!p.result && !diving){
         ctx.strokeStyle = PAL.darkest;
         ctx.lineWidth = 1;
@@ -2508,6 +2662,17 @@
         ctx.moveTo(p.aimX-9, groundY-6); ctx.lineTo(p.aimX-3, groundY-6);
         ctx.moveTo(p.aimX+3, groundY-6); ctx.lineTo(p.aimX+9, groundY-6);
         ctx.stroke();
+      }
+
+      // LE TIGER MYSTIQUE:s eventuella besök (se startPommesHeist()) -
+      // dyker bara upp SAMTIDIGT som den vanliga rusningen, stjäl
+      // ingenting, sätter sig bara en stund på andra sidan pommesen och går
+      // igen, se updateTigerPommesVisit(). Ritas FÖRE fiskmåsen så hennes
+      // egen dyk-blixt (vid en träff, se attemptPommesDive()) inte hamnar
+      // bakom den.
+      if(p.tiger){
+        const t = p.tiger;
+        this.drawPlainTiger(t.x, groundY, t.phase === 'exit' ? 1 : -1, t.walkT, diving && t.caught && p.diveHit);
       }
 
       this.drawSeagull(p.aimX, seagullY, false, p.aimX >= px ? -1 : 1);
@@ -3049,7 +3214,10 @@
             dir,
             wobbleAmp: SEAGULL_WOBBLE_AMP_MIN + Math.random()*(SEAGULL_WOBBLE_AMP_MAX-SEAGULL_WOBBLE_AMP_MIN),
             wobbleFreq: SEAGULL_WOBBLE_FREQ_MIN + Math.random()*(SEAGULL_WOBBLE_FREQ_MAX-SEAGULL_WOBBLE_FREQ_MIN),
-            wobblePhase: Math.random()*Math.PI*2
+            wobblePhase: Math.random()*Math.PI*2,
+            // Se POMMES_CARRY_UNLOCK_AT/POMMES_CARRY_CHANCE ovan - rent
+            // kosmetiskt, se drawSeagull().
+            carryingFries: this.pommesStolenTotal >= POMMES_CARRY_UNLOCK_AT && Math.random() < POMMES_CARRY_CHANCE
           };
         }
       }
@@ -3854,16 +4022,18 @@
       return 'normal';
     }
     // LeTigerMystique tar över fiskmåsens plats (se updateSeagull()/
-    // drawSceneTopDown()) så fort man är inne i det psykedeliska
-    // stämningsläget i klassiskt/tidsgräns-läge (och man inte redan hittat
-    // henne där, se hasHitTiger nedan), ELLER under det särskilda bakhållet
-    // i tidsutmaningen på runda 6 (se tigerAmbushActive() nedan), ELLER om
-    // det vimlar av helt vanliga tigrar i tiger-stämningsläget (se
-    // isPlainTigerStage() nedan) - aldrig i fiskmås-undvikandet eller online
-    // (currentStage är redan alltid 'normal' online, se getVisualStage()
-    // ovan).
+    // drawSceneTopDown()) under det särskilda bakhållet i tidsutmaningen på
+    // runda 6 (se tigerAmbushActive() nedan), ELLER om det vimlar av helt
+    // vanliga tigrar i tiger-stämningsläget (se isPlainTigerStage() nedan) -
+    // aldrig i fiskmås-undvikandet eller online (currentStage är redan alltid
+    // 'normal' online, se getVisualStage() ovan).
+    //
+    // Hennes allra FÖRSTA gömställe (att hitta henne i det psykedeliska
+    // stämningsläget i klassiskt/tidsgräns-läge, innan man ens sprungit på
+    // henne i jaktläget) har tagits bort på begäran - kedjan börjar nu direkt
+    // på det som tidigare var steg två, se huntTigerActive() nedan.
     isTigerStage(){
-      return (this.currentStage === 'psychedelic' && !this.hasHitTiger && (this.gameMode === 'classic' || this.gameMode === 'timeattack')) || this.tigerAmbushActive() || this.isPlainTigerStage();
+      return this.tigerAmbushActive() || this.isPlainTigerStage();
     }
     // Från och med tiger-stämningsläget (se getVisualStage(),
     // TIGER_STAGE_FROM_ROUND i klassiskt/tidsgräns-läge, eller direkt efter
@@ -3895,11 +4065,15 @@
     // bara på natten, och till skillnad från isTigerStage() ERSÄTTER hon
     // inte fiskmåsarna här: hon går bara till fots över planen SAMTIDIGT som
     // de flyger som vanligt, se updateSeagull()/checkSeagullThrowCollision().
+    // Detta är numera kedjans ANDRA gömställe - hasHitTigerAtPommes: man
+    // måste först ha hittat henne i den allra första pommesrusningen i
+    // fiskmåsläget (se startPommesHeist()/markTigerPommesHit()) innan hon
+    // visar sig här.
     // !hasHitTigerAtNight: sedan hon VÄL hittats här en gång flyttar hon sig
     // vidare (till bakhållet i tidsutmaningen, se tigerAmbushActive()) - hon
     // ska inte gå att hitta på samma ställe igen.
     huntTigerActive(){
-      return this.hasHitTiger && !this.hasHitTigerAtNight && this.gameMode === 'seagullhunt' && this.currentStage === 'night';
+      return this.hasHitTigerAtPommes && !this.hasHitTigerAtNight && this.gameMode === 'seagullhunt' && this.currentStage === 'night';
     }
     // Anropas av updateSeagull() - avgör om tigern överhuvudtaget ska kunna
     // gå över planen just nu, oavsett om hon ersätter fiskmåsen
@@ -4106,7 +4280,10 @@
         }
       } else {
         const gullPos = this.matchType === 'online' ? this.onlineSeagullPos() : this.seagullPos();
-        if(gullPos) this.drawSeagull(gullPos.x, gullPos.y, false, gullPos.dir);
+        // carryingFries (se POMMES_CARRY_UNLOCK_AT ovan) är bara satt lokalt
+        // på this.seagull - inget som synkas i onlineduellen, så den frågan
+        // ställs bara i det lokala fallet.
+        if(gullPos) this.drawSeagull(gullPos.x, gullPos.y, false, gullPos.dir, this.matchType !== 'online' && this.seagull && this.seagull.carryingFries);
         // Jaktläget på natten (om upplåst, se huntTigerActive()): tigern går
         // över SAMTIDIGT som fiskmåsen ovan - hon ersätter den inte här, till
         // skillnad från isTigerStage()-grenen ovan.
@@ -4509,7 +4686,7 @@
     // fenixens eld-features (omfärgad kropp, flammande vingspetsar, en liten
     // flamtofs och glödande ögon) medan respektive toggle är på. Alla tre
     // går att kombinera fritt med varandra.
-    drawSeagull(x, y, dizzy, dir){
+    drawSeagull(x, y, dizzy, dir, carryingFries){
       const ctx = this.ctx;
       ctx.save();
       ctx.translate(Math.round(x), Math.round(y));
@@ -4533,6 +4710,15 @@
       this.rect(6,-9,7,7, bodyC);
       // näbb
       this.rect(13,-6,4,2, '#f2a53f');
+      // Liten pommes i näbben - kosmetisk upplåsning, se POMMES_CARRY_
+      // UNLOCK_AT/carryingFries ovan. Fasta färger precis som kroppen/
+      // vingarna ovan, så den syns lika bra oavsett stämningsläge.
+      if(carryingFries){
+        this.rect(15,-7,5,5, '#8b5a2b');
+        this.rect(16,-9,1,4, '#ffe27a');
+        this.rect(17.5,-10,1,5, '#ffe27a');
+        this.rect(19,-8,1,4, '#ffe27a');
+      }
       if(fire) this.drawPhoenixCrest(9.5, -9, 2.5);
       if(this.trophyKingOn) this.drawBossCrown(9.5, -9, 3.5);
       const eyeC = fire ? '#ffe27a' : PAL.darkest;
@@ -5446,10 +5632,11 @@
       y += 8;
 
       const stats = [
-        { label:'FISKMÅSAR JAGADE',      value: this.totalSeagullHits },
         { label:'RUNDOR KLARADE',        value: this.totalRoundsCleared },
         { label:'ONLINEMATCHER VUNNA',      value: this.totalOnlineWins },
-        { label:'ONLINEMATCHER FÖRLORADE',  value: this.totalOnlineLosses }
+        { label:'ONLINEMATCHER FÖRLORADE',  value: this.totalOnlineLosses },
+        { label:'FISKMÅSAR JAGADE',      value: this.totalSeagullHits },
+        { label:'POMMES STULNA',         value: this.pommesStolenTotal }
       ];
       const rowH = 9;
       stats.forEach((s,i)=>{
