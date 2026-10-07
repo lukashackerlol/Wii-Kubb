@@ -539,6 +539,8 @@
   const TIGER_POMMES_AIM_MIN = 10;
   const TIGER_POMMES_AIM_MAX = W - 10;
   const TIGER_POMMES_HIT_KEY = 'wiiKubbTigerPommesHitReset1'; // sparar om spelaren hittat henne här - se markTigerPommesHit()
+  const TIGER_CLASSIC_HIT_KEY = 'wiiKubbTigerClassicHitReset1'; // sparar om spelaren hittat henne i klassiskt läge, runda 2 - se classicTigerActive()/markTigerClassicHit()
+  const TIGER_CLASSIC_ROUND = 2;          // rundan i klassiskt läge där hon gömmer sig, se classicTigerActive()
 
   // ---- fiskmås-jaktläget (dolt bonusläge, låses upp via highscore-fliken) ----
   const HUNT_GAP_MIN = 0.3, HUNT_GAP_MAX = 0.9; // paus mellan överflygningar - mycket kortare än i vanliga läget
@@ -735,6 +737,7 @@
       this.ctx = canvas.getContext('2d');
       this.ctx.imageSmoothingEnabled = false;
       this.ctx.scale(3,3);
+      this.installTextPlates();
       this.audio = new AudioEngine();
 
       this.state = 'menu'; // menu, aim, power, throw, overpower, kingfall, seagullhit, tigerhit, roundclear, gameover, nameentry, highscoreList, achievements, confirmQuit, roomCodeEntry, roomBusy, onlineLobby, roomJoinError, onlineWait, onlineRoundResult
@@ -757,7 +760,8 @@
       this.lastSeenMessageAt = 0; // undviker att visa samma meddelande om och om igen
       this.hasHitSeagull = this.loadSeagullHitFlag(); // styr om den lilla fiskmåsen visas på highscore-fliken
       this.hasHitTiger = this.loadTigerHitFlag(); // historisk flagga - låste tidigare upp jaktläges-mötet (se huntTigerActive()), men hennes första gömställe (det psykedeliska stämningsläget i klassiskt/tidsgräns-läge) är borttaget på begäran, så den styr inget längre. Kvar bara för bakåtkompatibilitet med gamla sparningar.
-      this.hasHitTigerAtPommes = this.loadTigerPommesHitFlag(); // NYA första länken i kedjan - låser upp jaktläges-mötet på natten (se huntTigerActive()), se markTigerPommesHit()
+      this.hasHitTigerInClassic = this.loadTigerClassicHitFlag(); // första länken i kedjan - låser upp hennes besök i pommesrusningen (se startPommesHeist()), se markTigerClassicHit()
+      this.hasHitTigerAtPommes = this.loadTigerPommesHitFlag(); // andra länken i kedjan - låser upp jaktläges-mötet på natten (se huntTigerActive()), se markTigerPommesHit()
       this.hasHitTigerAtNight = this.loadTigerNightHitFlag(); // låser upp att hon dyker upp igen i tidsutmaningen på runda 6, se tigerAmbushActive()
       this.hasHitTigerAmbush = this.loadTigerAmbushHitFlag(); // låser upp att hon dyker upp som boss efter fenixen, se startSeagullBoss()
       this.totalSeagullHits = this.loadSeagullTotalHits(); // livstids-räknare, se SEAGULL_TOTAL_HITS_KEY - laddas en gång och räknas sedan bara uppåt
@@ -932,6 +936,38 @@
       this.powerSpeed = 3.6 + (this.round-1)*0.3;
       this.state = 'aim'; this.aimT = 0;
     }
+    // I tiger-stämningsläget är fältets ränder (PAL.light) nästan svarta,
+    // precis som texten (PAL.darkest/PAL.dark) - all text ute på planen
+    // försvann därför mot ränderna. Istället för att ändra vart och ett av
+    // alla fillText-anropen läggs här en platta i bakgrundens orange
+    // (PAL.lightest) bakom varje MÖRK text, men bara i just tiger-läget.
+    // Ljus text (t.ex. på mörka rutor) lämnas orörd, och mörk text på en
+    // ljus ruta får en platta i samma färg som rutan, så den syns inte.
+    installTextPlates(){
+      const ctx = this.ctx;
+      const rawFillText = ctx.fillText.bind(ctx);
+      const norm = document.createElement('canvas').getContext('2d');
+      const normColor = c => { norm.fillStyle = '#000'; norm.fillStyle = c; return norm.fillStyle; };
+      ctx.fillText = (text, x, y, ...rest) => {
+        if(this.currentStage === 'tiger'){
+          const fill = ctx.fillStyle;
+          if(typeof fill === 'string' && (fill === normColor(PAL.darkest) || fill === normColor(PAL.dark))){
+            const w = ctx.measureText(text).width;
+            const size = parseFloat((ctx.font.match(/(\d+(?:\.\d+)?)px/) || [0, 6])[1]);
+            const left = ctx.textAlign === 'center' ? x - w/2
+              : (ctx.textAlign === 'right' || ctx.textAlign === 'end') ? x - w
+              : x;
+            const top = ctx.textBaseline === 'top' ? y
+              : ctx.textBaseline === 'middle' ? y - size/2
+              : y - size;
+            ctx.fillStyle = PAL.lightest;
+            ctx.fillRect(Math.floor(left) - 1, Math.floor(top) - 1, Math.ceil(w) + 2, Math.ceil(size) + 2);
+            ctx.fillStyle = fill;
+          }
+        }
+        rawFillText(text, x, y, ...rest);
+      };
+    }
     startGame(){
       this.audio.ensure();
       this.round = 1;
@@ -999,9 +1035,33 @@
         }
       });
     }
-    // ---- flagga: har spelaren hittat LE TIGER MYSTIQUE i den allra första
-    // pommesrusningen i fiskmåsläget (se startPommesHeist())? Det här är
-    // NYA första länken i kedjan - låser upp jaktläges-mötet på natten (se
+    // ---- flagga: har spelaren hittat LE TIGER MYSTIQUE i klassiskt läge på
+    // runda 2 (se classicTigerActive())? Kedjans FÖRSTA länk - låser upp
+    // hennes besök i pommesrusningen i fiskmåsläget (se startPommesHeist()).
+    // Notisen köas som vanligt och visas när rundan är slut.
+    loadTigerClassicHitFlag(){
+      try{ return localStorage.getItem(TIGER_CLASSIC_HIT_KEY) === '1'; }catch(e){ return false; }
+    }
+    markTigerClassicHit(){
+      if(this.hasHitTigerInClassic) return; // redan upplåst, inget mer att spara
+      this.hasHitTigerInClassic = true;
+      try{ localStorage.setItem(TIGER_CLASSIC_HIT_KEY, '1'); }catch(e){}
+      this.queueUnlockNotice({
+        name: 'LE TIGER MYSTIQUE',
+        desc: 'SPRANG IVÄG OCH GÖMDE SIG',
+        draw: (cx,cy)=>{
+          const ctx = this.ctx;
+          ctx.save();
+          ctx.translate(cx, cy);
+          ctx.scale(0.6, 0.6);
+          this.drawTiger(0, 14, -1, 0);
+          ctx.restore();
+        }
+      });
+    }
+    // ---- flagga: har spelaren hittat LE TIGER MYSTIQUE i pommesrusningen
+    // i fiskmåsläget (se startPommesHeist())? Det här är kedjans ANDRA
+    // länk (efter klassiskt läge, runda 2) - låser upp jaktläges-mötet på natten (se
     // huntTigerActive()). Till skillnad från de andra länkarna finns ingen
     // "rundans slut" att vänta in i fiskmåsläget (man kan hålla på hur länge
     // som helst), så notisen visas direkt istället för att köas, se
@@ -1040,18 +1100,9 @@
       if(this.hasHitTiger) return; // redan upplåst, inget mer att spara
       this.hasHitTiger = true;
       try{ localStorage.setItem(TIGER_HIT_KEY, '1'); }catch(e){}
-      this.queueUnlockNotice({
-        name: 'LE TIGER MYSTIQUE',
-        desc: 'SPRANG IVÄG OCH GÖMDE SIG',
-        draw: (cx,cy)=>{
-          const ctx = this.ctx;
-          ctx.save();
-          ctx.translate(cx, cy);
-          ctx.scale(0.6, 0.6);
-          this.drawTiger(0, 14, -1, 0);
-          ctx.restore();
-        }
-      });
+      // Ingen egen notis längre - flaggan styr inget (se hasHitTiger), och
+      // varje länk i kedjan visar redan sin egen notis. Annars dök samma
+      // "SPRANG IVÄG"-notis upp två gånger i rad vid träffen på natten.
     }
     // ---- flagga: har spelaren träffat henne på natten i jaktläget (se
     // huntTigerActive())? Precis samma idé som ovan - hon sprang iväg och
@@ -1081,10 +1132,9 @@
     // ---- flagga: har spelaren träffat henne i bakhållet (tidsutmaningen,
     // runda 6, se tigerAmbushActive())? Sista länken i kedjan - låser upp att
     // hon dyker upp som en fjärde och sista bossnivå efter fenixen i
-    // jaktläget, se startSeagullBoss(). Notistexten avslöjar INTE detta -
-    // precis som de två tidigare upplåsningarna låtsas den bara vara ännu en
-    // gång hon sprang iväg och gömde sig, spelaren ska överraskas av
-    // bossmötet, inte förvarnas om det.
+    // jaktläget, se startSeagullBoss(). Till skillnad från de tidigare
+    // upplåsningarna avslöjar notistexten detta som en ledtråd - att hon
+    // blivit en boss - men inte exakt var hon dyker upp.
     loadTigerAmbushHitFlag(){
       try{ return localStorage.getItem(TIGER_AMBUSH_HIT_KEY) === '1'; }catch(e){ return false; }
     }
@@ -1094,7 +1144,7 @@
       try{ localStorage.setItem(TIGER_AMBUSH_HIT_KEY, '1'); }catch(e){}
       this.queueUnlockNotice({
         name: 'LE TIGER MYSTIQUE',
-        desc: 'SPRANG IVÄG OCH GÖMDE SIG',
+        desc: 'HAR BLIVIT EN BOSS',
         draw: (cx,cy)=>{
           const ctx = this.ctx;
           ctx.save();
@@ -2343,14 +2393,15 @@
         // rusningen om LE TIGER MYSTIQUE är med denna gång, satt en gång
         // här så det inte hoppar till den smala banan mitt i även om hon
         // hinner lämna innan rusningen är slut, se updatePommesHeist().
-        wideAim: !this.hasHitTigerAtPommes,
+        wideAim: this.hasHitTigerInClassic && !this.hasHitTigerAtPommes,
         // Så länge spelaren inte hittat henne här än (se
         // markTigerPommesHit()) kommer hon på besök SAMTIDIGT som den
         // vanliga rusningen pågår - hon stjäl ingenting, sätter sig bara en
         // stund bredvid (på andra sidan pommesen) och går igen, se
         // updateTigerPommesVisit()/drawPommesHeist() nedan. Upprepas varje
-        // rusning tills hon hittas.
-        tiger: !this.hasHitTigerAtPommes ? {
+        // rusning tills hon hittas - men först sedan hon hittats i
+        // klassiskt läge på runda 2 (se classicTigerActive()).
+        tiger: (this.hasHitTigerInClassic && !this.hasHitTigerAtPommes) ? {
           phase: 'enter',  // 'enter' -> 'sit' -> 'exit'
           x: TIGER_POMMES_ENTER_X,
           walkT: 0,
@@ -3000,7 +3051,9 @@
       // ständigt ha något att sikta på.
       if(this.gameMode === 'seagullhunt') return true;
       // Annars finns fiskmåsen bara med i den vanliga klosskastningen
-      // (topdown-vyn), inte i frontalvyn mot Kungen, och först från runda 4.
+      // (topdown-vyn), inte i frontalvyn mot Kungen, och först från runda 4 -
+      // utom när LE TIGER MYSTIQUE gömmer sig på runda 2, se classicTigerActive().
+      if(this.classicTigerActive()) return this.phase === 'kubbs';
       return this.round >= SEAGULL_FIRST_ROUND && this.phase === 'kubbs';
     }
     // Hur lång paus det blir innan nästa överflygning. I jaktläget blir
@@ -3369,7 +3422,11 @@
     triggerTigerHit(x,y){
       // Vanliga tigrar (isPlainTigerStage()) är bara djur i vägen - ingen
       // hemlighet att låsa upp, till skillnad från LE TIGER MYSTIQUE.
-      if(!this.isPlainTigerStage()) this.markTigerHit(); // låser upp att hon syns i jaktläget på natten (se huntTigerActive()), om det inte redan skett
+      // Klassiskt läge, runda 2 (se classicTigerActive()): låser upp nästa
+      // gömställe, pommesrusningen. Kastet går förlorat som vanligt, se
+      // finishTigerHit() - flaggan sätts redan här, så den grenen nås inte.
+      if(this.classicTigerActive()) this.markTigerClassicHit();
+      else if(!this.isPlainTigerStage()) this.markTigerHit(); // historisk flagga, se hasHitTiger
       // Träffades hon just nu UNDER den natt-jakt-lägesvisningen (se
       // huntTigerActive())? Då låser den träffen upp nästa gömställe också -
       // se markTigerNightHit()/tigerAmbushActive(). VIKTIGT: kollar
@@ -3950,7 +4007,9 @@
       const ctx = this.ctx;
       const barX = 34, barY = 17, barW = 92, barH = 7;
       this.rect(barX-2, barY-2, barW+4, barH+4, PAL.darkest);
-      this.rect(barX, barY, barW, barH, PAL.light);
+      // I tiger-läget är PAL.light nästan svart, precis som fyllningen -
+      // då syns inte mätaren alls, så den tomma delen får bakgrundens orange.
+      this.rect(barX, barY, barW, barH, this.currentStage === 'tiger' ? PAL.lightest : PAL.light);
       const pct = Math.max(0, b.hp/b.maxHp);
       const healing = !!b.isHealing;
       let fillColor = pct > 0.3 ? PAL.darkest : '#c1461f';
@@ -4033,7 +4092,17 @@
     // henne i jaktläget) har tagits bort på begäran - kedjan börjar nu direkt
     // på det som tidigare var steg två, se huntTigerActive() nedan.
     isTigerStage(){
-      return this.tigerAmbushActive() || this.isPlainTigerStage();
+      return this.classicTigerActive() || this.tigerAmbushActive() || this.isPlainTigerStage();
+    }
+    // Kedjans FÖRSTA gömställe: sedan spelaren någonsin besegrat fenixen
+    // (se markBossPhoenixDefeatedEver()) smyger hon över planen i klassiskt
+    // läge på runda 2 och ERSÄTTER fiskmåsen där, precis som i bakhållet
+    // nedan (fiskmåsen flyger egentligen inte förrän SEAGULL_FIRST_ROUND,
+    // se seagullActive() som släpper fram just detta). En träff låser upp
+    // hennes besök i pommesrusningen, se markTigerClassicHit().
+    // !hasHitTigerInClassic: sedan hon VÄL hittats här flyttar hon vidare.
+    classicTigerActive(){
+      return this.hasDefeatedBossPhoenixEver && !this.hasHitTigerInClassic && this.gameMode === 'classic' && this.round === TIGER_CLASSIC_ROUND;
     }
     // Från och med tiger-stämningsläget (se getVisualStage(),
     // TIGER_STAGE_FROM_ROUND i klassiskt/tidsgräns-läge, eller direkt efter
